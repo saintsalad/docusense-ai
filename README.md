@@ -2,6 +2,20 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
+### Prerequisites
+
+Before running the application, you need to start the ChromaDB server:
+
+```bash
+# Set CORS origins for ChromaDB
+$env:CHROMA_SERVER_CORS_ALLOW_ORIGINS='["http://localhost:3000"]'
+
+# Start ChromaDB server
+chroma run --host localhost --port 8000 --path ./chroma
+```
+
+### Running the Application
+
 First, run the development server:
 
 ```bash
