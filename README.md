@@ -81,12 +81,19 @@ The UI uses [`useChat`](https://ai-sdk.dev/docs/getting-started/nextjs-app-route
 
 - **Ollama** must be running (default `http://localhost:11434`). Code uses **`openai.chat(model)`** so requests hit **`/v1/chat/completions`** (the default `openai(model)` path uses OpenAI’s **Responses** API and breaks Ollama).
 - Optional env vars: `OLLAMA_BASE_URL`, `OLLAMA_CHAT_MODEL` (default `gpt-oss:20b`), `OLLAMA_OPENAI_API_KEY` (dummy default `ollama` if unset).
+- If **`OLLAMA_CHAT_MODEL`** is not installed, **`POST /api/chat`** checks **`GET {OLLAMA_BASE_URL}/v1/models`** first and streams a normal assistant message explaining how to `ollama pull` or fix `.env` (instead of a raw SDK error in the console).
 
 The model decides when to call the **`searchKnowledgeBase`** tool; Chroma is queried only on tool execution, not on every message.
 
 - **`KNOWLEDGE_SEARCH_N_RESULTS`** (optional): max chunks returned per tool call (default **12**, max 50). The vector DB returns up to that many nearest neighbors; if you see fewer, there may not be more similar chunks in the collection, or the model’s search query was narrow.
-- **`DEBUG`** (optional): set to `true`, `1`, or `yes` to attach **`vectorDebug`** to `searchKnowledgeBase` tool results (query, hit count, per-hit distance/score and snippet). The chat UI shows this in an accordion under the tool row.
+- **`DEBUG`** (optional): set to `true`, `1`, or `yes` to attach **`vectorDebug`** to `searchKnowledgeBase` tool results (query, hit count, per-hit **id**, distance/score and snippet). The chat UI shows this in an accordion under the tool row. Also registers **`proposeUpdateKnowledgeDocument`** and **`proposeDeleteKnowledgeDocument`**: the model proposes changes; you **edit + Proceed** for updates, or **confirm** for deletes. Mutations hit **`POST /api/knowledge/apply-update`** and **`POST /api/knowledge/apply-delete`** (both return 403 if `DEBUG` is off).
 - **`CHAT_MAX_OUTPUT_TOKENS`** (optional): max tokens for assistant replies (default **16384**, capped at **128000**). Raise this if answers truncate or the model synthesizes only one passage despite multiple retrieved chunks.
+
+---
+
+## Admin · Knowledge embedder (`POST /api/embed`)
+
+The upload flow calls Ollama’s native **`POST /api/chat`** to turn raw text into `[{ date, text }]` chunks. Short single-block notes (≤500 chars, ≤6 lines, one paragraph) are **stored verbatim** with no LLM call. Longer text uses **`options.temperature: 0`** and a prompt that forbids inventing facts or padding short notes. Uses **`OLLAMA_BASE_URL`** and **`OLLAMA_CHAT_MODEL`** (same defaults as chat).
 
 ---
 

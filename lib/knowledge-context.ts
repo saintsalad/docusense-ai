@@ -10,6 +10,8 @@ function parseKnowledgeSearchLimit(): number {
 
 export type KnowledgeHit = {
     rank: number;
+    /** Chroma record id (from query results). */
+    id: string;
     /** Chroma distance for this space; lower = closer match (typ. L2). */
     distance: number;
     date: string;
@@ -42,6 +44,7 @@ export async function fetchKnowledgeBase(query: string): Promise<KnowledgeFetchR
     const docs = results.documents?.[0] ?? [];
     const metas = results.metadatas?.[0] ?? [];
     const distances = results.distances?.[0] ?? [];
+    const rowIds = results.ids?.[0] ?? [];
 
     if (docs.length === 0) {
         return { context: "", hits: [] };
@@ -49,6 +52,7 @@ export async function fetchKnowledgeBase(query: string): Promise<KnowledgeFetchR
 
     const hits: KnowledgeHit[] = docs.map((doc, i) => ({
         rank: i + 1,
+        id: typeof rowIds[i] === "string" ? rowIds[i] : "",
         distance: typeof distances[i] === "number" ? distances[i] : Number.NaN,
         date: (metas[i] as { date?: string } | null)?.date ?? "unknown",
         document: doc ?? "",

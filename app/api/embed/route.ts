@@ -2,20 +2,27 @@ import { NextResponse } from "next/server";
 
 const TODAY = new Date().toISOString().split("T")[0];
 
-const SYSTEM_PROMPT = `You are a knowledge formatting assistant. Transform raw text, notes, or journal entries into structured JSON chunks optimized for vector embeddings.
+const host = (process.env.OLLAMA_BASE_URL ?? "http://localhost:11434").replace(/\/$/, "");
+const embedFormatModel = process.env.OLLAMA_CHAT_MODEL ?? "gpt-oss:20b";
 
-Rules:
-- Each chunk should be 2–4 sentences (25–60 words)
-- Keep related ideas together; do not split them
-- Preserve all important details and context
-- If no date is found, use today's date: ${TODAY}
-- Return ONLY a valid JSON array — no markdown, no explanation
+const SYSTEM_PROMPT = `You are a knowledge formatting assistant. Turn the user's raw text into a JSON array of chunks for vector search.
 
-Output format:
-[
-  { "date": "YYYY-MM-DD", "text": "chunk text here" },
-  { "date": "YYYY-MM-DD", "text": "next chunk" }
-]`;
+FACTUAL INTEGRITY (critical):
+- Do NOT invent facts, places, hobbies, travel, culture, or events that are not clearly stated in the input.
+- Do NOT "helpfully" expand short notes into longer stories or marketing-style prose.
+- Keep the same meaning as the user; you may only trim whitespace and fix obvious typos.
+
+LENGTH AND CHUNKING:
+- Short input (one thought, a single sentence, or under ~400 characters): output exactly ONE chunk. The "text" must stay direct and faithful — same substance, not longer. Never add filler to reach a word count.
+- Longer documents: split into coherent chunks (by paragraph or topic). You may tighten redundant wording in long text only if nothing factual is lost. Still do not add new information.
+
+DATES:
+- If the input contains an explicit date, use it (normalized to YYYY-MM-DD when possible).
+- Otherwise use: ${TODAY}
+
+OUTPUT:
+- Return ONLY a valid JSON array. No markdown fences, no commentary.
+- Schema: [ { "date": "YYYY-MM-DD", "text": "..." }, ... ]`;
 
 type RawChunk = { date: unknown; text: unknown };
 
@@ -46,16 +53,33 @@ export async function POST(req: Request) {
             );
         }
 
-        const res = await fetch("http://localhost:11434/api/chat", {
+        const trimmed = content.trim();
+
+        /** Skip the LLM for compact notes so wording is never elaborated or hallucinated. */
+        const lineCount = trimmed.split("\n").length;
+        const paragraphCount = trimmed.split(/\n\s*\n/).filter((p) => p.trim().length > 0).length;
+        const isShortSingleBlock =
+            trimmed.length <= 500 && paragraphCount <= 1 && lineCount <= 6;
+
+        if (isShortSingleBlock) {
+            return NextResponse.json({
+                chunks: [{ date: TODAY, text: trimmed }],
+            });
+        }
+
+        const res = await fetch(`${host}/api/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                model: "gpt-oss:20b",
+                model: embedFormatModel,
                 messages: [
                     { role: "system", content: SYSTEM_PROMPT },
-                    { role: "user", content },
+                    { role: "user", content: trimmed },
                 ],
                 stream: false,
+                options: {
+                    temperature: 0,
+                },
             }),
         });
 

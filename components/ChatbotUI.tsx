@@ -8,11 +8,26 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { motion } from "framer-motion";
-import { Send, Plus, MessageSquare, Database, Loader2, CheckCircle, Wrench } from "lucide-react";
+import {
+    Send,
+    Plus,
+    MessageSquare,
+    Database,
+    Loader2,
+    CheckCircle,
+    Wrench,
+    Pencil,
+    Trash2,
+    AlertTriangle,
+    FilePlus,
+} from "lucide-react";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 
 const TOOL_FRIENDLY_NAME: Record<string, string> = {
     searchKnowledgeBase: "Knowledge base search",
+    proposeAddKnowledgeDocument: "Propose KB document add (debug)",
+    proposeUpdateKnowledgeDocument: "Propose KB document update (debug)",
+    proposeDeleteKnowledgeDocument: "Propose KB document delete (debug)",
 };
 
 function toolUiMeta(rawName: string): { rawName: string; friendly: string } {
@@ -83,6 +98,7 @@ type VectorDebugPayload = {
     hitCount: number;
     hits: Array<{
         rank: number;
+    id: string;
         distance: number;
         date: string;
         document: string;
@@ -109,11 +125,407 @@ function parseVectorDebugFromToolOutput(output: unknown): VectorDebugPayload | n
         hitCount: typeof v.hitCount === "number" ? v.hitCount : normalized.length,
         hits: normalized.map((h, i) => ({
             rank: typeof h.rank === "number" ? h.rank : i + 1,
+            id: typeof (h as { id?: unknown }).id === "string" ? (h as { id: string }).id : "",
             distance: typeof h.distance === "number" ? h.distance : Number.NaN,
             date: typeof h.date === "string" ? h.date : "unknown",
             document: h.document,
         })),
     };
+}
+
+type PendingKbUpdate = {
+    pendingUserConfirmation: true;
+    action: "update";
+    recordId: string;
+    currentDocument: string;
+    proposedDocument: string;
+    date: string;
+    source?: string;
+};
+
+type PendingKbDelete = {
+    pendingUserConfirmation: true;
+    action: "delete";
+    recordId: string;
+    previewDocument: string;
+    date: string;
+    source?: string;
+};
+
+type PendingKbAdd = {
+    pendingUserConfirmation: true;
+    action: "add";
+    proposedDocument: string;
+    source?: string;
+};
+
+function parseProposeKbToolFailure(output: unknown): { error: string } | null {
+    if (typeof output !== "object" || output === null) return null;
+    const o = output as Record<string, unknown>;
+    if (o.pendingUserConfirmation === true) return null;
+    if (o.ok === false && typeof o.error === "string") return { error: o.error };
+    return null;
+}
+
+function parsePendingKnowledgeMutation(output: unknown): PendingKbUpdate | PendingKbDelete | PendingKbAdd | null {
+    if (typeof output !== "object" || output === null) return null;
+    const o = output as Record<string, unknown>;
+    if (o.pendingUserConfirmation !== true) return null;
+    if (o.action === "add") {
+        if (typeof o.proposedDocument === "string") {
+            return {
+                pendingUserConfirmation: true,
+                action: "add",
+                proposedDocument: o.proposedDocument,
+                source: typeof o.source === "string" ? o.source : undefined,
+            };
+        }
+    }
+    if (o.action === "update") {
+        if (
+            typeof o.recordId === "string" &&
+            typeof o.currentDocument === "string" &&
+            typeof o.proposedDocument === "string" &&
+            typeof o.date === "string"
+        ) {
+            return {
+                pendingUserConfirmation: true,
+                action: "update",
+                recordId: o.recordId,
+                currentDocument: o.currentDocument,
+                proposedDocument: o.proposedDocument,
+                date: o.date,
+                source: typeof o.source === "string" ? o.source : undefined,
+            };
+        }
+    }
+    if (o.action === "delete") {
+        if (
+            typeof o.recordId === "string" &&
+            typeof o.previewDocument === "string" &&
+            typeof o.date === "string"
+        ) {
+            return {
+                pendingUserConfirmation: true,
+                action: "delete",
+                recordId: o.recordId,
+                previewDocument: o.previewDocument,
+                date: o.date,
+                source: typeof o.source === "string" ? o.source : undefined,
+            };
+        }
+    }
+    return null;
+}
+
+function DebugKnowledgeAddPanel({ payload }: { payload: PendingKbAdd }) {
+    const [edited, setEdited] = useState(payload.proposedDocument);
+    const [sourceEdited, setSourceEdited] = useState(payload.source ?? "");
+    const [loading, setLoading] = useState(false);
+    const [phase, setPhase] = useState<"edit" | "ok" | "err">("edit");
+    const [errMsg, setErrMsg] = useState<string | null>(null);
+    const [newRecordId, setNewRecordId] = useState<string | null>(null);
+
+    const onProceed = async () => {
+        const text = edited.trim();
+        if (!text) return;
+        setLoading(true);
+        setErrMsg(null);
+        try {
+            const body: { document: string; source?: string } = { document: text };
+            const s = sourceEdited.trim();
+            if (s) body.source = s;
+
+            const res = await fetch("/api/knowledge/apply-add", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+            const data = (await res.json()) as { ok?: boolean; recordId?: string; error?: unknown };
+            if (!res.ok || !data.ok) {
+                const msg =
+                    typeof data.error === "string"
+                        ? data.error
+                        : "Add failed. Is DEBUG enabled on the server?";
+                setErrMsg(msg);
+                setPhase("err");
+                return;
+            }
+            if (typeof data.recordId === "string") setNewRecordId(data.recordId);
+            setPhase("ok");
+        } catch {
+            setErrMsg("Network error");
+            setPhase("err");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    if (phase === "ok") {
+        return (
+            <div className="mt-2 rounded-md border border-green-200/90 bg-green-50/80 px-3 py-2 text-xs text-green-950 dark:border-green-900/50 dark:bg-green-950/30 dark:text-green-100">
+                <div className="flex items-center gap-2 font-medium">
+                    <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                    New chunk added to vector DB
+                </div>
+                {newRecordId ? (
+                    <p className="mt-1 font-mono text-[10px] opacity-90">id: {newRecordId}</p>
+                ) : null}
+            </div>
+        );
+    }
+
+    return (
+        <div className="mt-2 rounded-md border border-emerald-200/90 bg-emerald-50/70 p-3 text-left dark:border-emerald-900/55 dark:bg-emerald-950/25">
+            <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-emerald-950 dark:text-emerald-100">
+                <FilePlus className="h-3.5 w-3.5 shrink-0" />
+                DEBUG · Confirm new document
+            </div>
+            <p className="mb-2 text-[10px] text-emerald-900/85 dark:text-emerald-200/85">
+                Edit the text below, then click <strong>Proceed</strong> to insert a new record in Chroma (embeds).
+            </p>
+            <div className="space-y-1">
+                <p className="text-[10px] font-medium text-muted-foreground">Source label (optional, metadata)</p>
+                <Textarea
+                    value={sourceEdited}
+                    onChange={(e) => setSourceEdited(e.target.value)}
+                    className="min-h-[44px] resize-y font-mono text-xs"
+                    placeholder="e.g. meeting-notes (defaults to debug-add if empty)"
+                    disabled={loading}
+                    rows={2}
+                />
+            </div>
+            <div className="mt-2 space-y-1">
+                <p className="text-[10px] font-medium text-muted-foreground">Document text (editable)</p>
+                <Textarea
+                    value={edited}
+                    onChange={(e) => setEdited(e.target.value)}
+                    className="min-h-[140px] resize-y font-mono text-xs"
+                    disabled={loading}
+                />
+            </div>
+            {errMsg ? <p className="mt-2 text-xs text-destructive">{errMsg}</p> : null}
+            <Button
+                type="button"
+                size="sm"
+                className="mt-3"
+                onClick={() => void onProceed()}
+                disabled={loading || !edited.trim()}
+            >
+                {loading ? (
+                    <>
+                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                        Adding…
+                    </>
+                ) : (
+                    "Proceed"
+                )}
+            </Button>
+        </div>
+    );
+}
+
+function DebugKnowledgeUpdatePanel({ payload }: { payload: PendingKbUpdate }) {
+    const [edited, setEdited] = useState(payload.proposedDocument);
+    const [loading, setLoading] = useState(false);
+    const [phase, setPhase] = useState<"edit" | "ok" | "err">("edit");
+    const [errMsg, setErrMsg] = useState<string | null>(null);
+
+    const onProceed = async () => {
+        const text = edited.trim();
+        if (!text) return;
+        setLoading(true);
+        setErrMsg(null);
+        try {
+            const res = await fetch("/api/knowledge/apply-update", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ recordId: payload.recordId, document: text }),
+            });
+            const data = (await res.json()) as { ok?: boolean; error?: unknown };
+            if (!res.ok || !data.ok) {
+                const msg =
+                    typeof data.error === "string"
+                        ? data.error
+                        : "Update failed. Is DEBUG enabled on the server?";
+                setErrMsg(msg);
+                setPhase("err");
+                return;
+            }
+            setPhase("ok");
+        } catch {
+            setErrMsg("Network error");
+            setPhase("err");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    if (phase === "ok") {
+        return (
+            <div className="mt-2 rounded-md border border-green-200/90 bg-green-50/80 px-3 py-2 text-xs text-green-950 dark:border-green-900/50 dark:bg-green-950/30 dark:text-green-100">
+                <div className="flex items-center gap-2 font-medium">
+                    <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                    Vector DB updated
+                </div>
+                <p className="mt-1 font-mono text-[10px] opacity-90">id: {payload.recordId}</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="mt-2 rounded-md border border-amber-200/90 bg-amber-50/70 p-3 text-left dark:border-amber-900/55 dark:bg-amber-950/25">
+            <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-amber-950 dark:text-amber-100">
+                <Pencil className="h-3.5 w-3.5 shrink-0" />
+                DEBUG · Confirm document update
+            </div>
+            <p className="mb-2 text-[10px] text-amber-900/85 dark:text-amber-200/85">
+                Edit the proposed text below, then click <strong>Proceed</strong> to write it to Chroma (re-embeds).
+            </p>
+            <div className="mb-2 space-y-1">
+                <p className="text-[10px] font-medium text-muted-foreground">Current (read-only)</p>
+                <pre className="max-h-28 overflow-y-auto rounded border border-amber-200/80 bg-white/90 p-2 text-[10px] whitespace-pre-wrap break-words dark:border-amber-900/40 dark:bg-gray-950/80">
+                    {payload.currentDocument}
+                </pre>
+            </div>
+            <div className="space-y-1">
+                <p className="text-[10px] font-medium text-muted-foreground">New text (editable)</p>
+                <Textarea
+                    value={edited}
+                    onChange={(e) => setEdited(e.target.value)}
+                    className="min-h-[140px] resize-y font-mono text-xs"
+                    disabled={loading}
+                />
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+                <span>date: {payload.date}</span>
+                {payload.source ? <span>source: {payload.source}</span> : null}
+            </div>
+            {errMsg ? <p className="mt-2 text-xs text-destructive">{errMsg}</p> : null}
+            <Button
+                type="button"
+                size="sm"
+                className="mt-3"
+                onClick={() => void onProceed()}
+                disabled={loading || !edited.trim()}
+            >
+                {loading ? (
+                    <>
+                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                        Updating…
+                    </>
+                ) : (
+                    "Proceed"
+                )}
+            </Button>
+        </div>
+    );
+}
+
+function DebugKnowledgeDeletePanel({ payload }: { payload: PendingKbDelete }) {
+    const [loading, setLoading] = useState(false);
+    const [phase, setPhase] = useState<"confirm" | "ok" | "cancelled" | "err">("confirm");
+    const [errMsg, setErrMsg] = useState<string | null>(null);
+
+    const onDelete = async () => {
+        setLoading(true);
+        setErrMsg(null);
+        try {
+            const res = await fetch("/api/knowledge/apply-delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ recordId: payload.recordId }),
+            });
+            const data = (await res.json()) as { ok?: boolean; error?: unknown };
+            if (!res.ok || !data.ok) {
+                const msg =
+                    typeof data.error === "string"
+                        ? data.error
+                        : "Delete failed. Is DEBUG enabled on the server?";
+                setErrMsg(msg);
+                setPhase("err");
+                return;
+            }
+            setPhase("ok");
+        } catch {
+            setErrMsg("Network error");
+            setPhase("err");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    if (phase === "ok") {
+        return (
+            <div className="mt-2 rounded-md border border-green-200/90 bg-green-50/80 px-3 py-2 text-xs text-green-950 dark:border-green-900/50 dark:bg-green-950/30 dark:text-green-100">
+                <div className="flex items-center gap-2 font-medium">
+                    <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                    Record removed from vector DB
+                </div>
+                <p className="mt-1 font-mono text-[10px] opacity-90">id: {payload.recordId}</p>
+            </div>
+        );
+    }
+
+    if (phase === "cancelled") {
+        return (
+            <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-muted-foreground dark:border-gray-700 dark:bg-gray-900/50">
+                Cancelled — nothing was deleted.
+            </div>
+        );
+    }
+
+    return (
+        <div className="mt-2 rounded-md border border-red-200/90 bg-red-50/60 p-3 text-left dark:border-red-900/50 dark:bg-red-950/20">
+            <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-red-950 dark:text-red-100">
+                <Trash2 className="h-3.5 w-3.5 shrink-0" />
+                DEBUG · Confirm deletion
+            </div>
+            <div className="mb-2 flex gap-2 rounded border border-red-200/70 bg-white/90 p-2 dark:border-red-900/40 dark:bg-gray-950/80">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
+                <p className="text-[10px] leading-snug text-red-900/90 dark:text-red-100/90">
+                    This permanently deletes this chunk from the knowledge base. Confirm only if you intend to remove it.
+                </p>
+            </div>
+            <p className="mb-1 text-[10px] font-medium text-muted-foreground">Record preview</p>
+            <pre className="mb-2 max-h-32 overflow-y-auto rounded border border-red-200/60 bg-white/90 p-2 text-[10px] whitespace-pre-wrap break-words dark:border-red-900/35 dark:bg-gray-950/80">
+                {payload.previewDocument}
+            </pre>
+            <div className="mb-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+                <span>date: {payload.date}</span>
+                {payload.source ? <span>source: {payload.source}</span> : null}
+                <span className="font-mono break-all">id: {payload.recordId}</span>
+            </div>
+            {errMsg ? <p className="mb-2 text-xs text-destructive">{errMsg}</p> : null}
+            <div className="flex flex-wrap gap-2">
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPhase("cancelled")}
+                    disabled={loading}
+                >
+                    Cancel
+                </Button>
+                <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => void onDelete()}
+                    disabled={loading}
+                >
+                    {loading ? (
+                        <>
+                            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                            Deleting…
+                        </>
+                    ) : (
+                        "Delete from vector DB"
+                    )}
+                </Button>
+            </div>
+        </div>
+    );
 }
 
 function KnowledgeBaseDebugAccordion({ debug }: { debug: VectorDebugPayload }) {
@@ -142,6 +554,11 @@ function KnowledgeBaseDebugAccordion({ debug }: { debug: VectorDebugPayload }) {
                     >
                         <div className="mb-1 flex flex-wrap gap-x-3 font-mono text-[10px] text-muted-foreground">
                             <span>rank #{h.rank}</span>
+                            {h.id ? (
+                                <span className="max-w-full break-all">
+                                    id: <code className="text-[9px]">{h.id}</code>
+                                </span>
+                            ) : null}
                             <span>
                                 score/distance:{" "}
                                 {Number.isFinite(h.distance) ? h.distance.toFixed(6) : "n/a"}
@@ -164,11 +581,25 @@ function ToolStatusRow({ part }: { part: UIMessage["parts"][number] }) {
         part.type === "dynamic-tool" ? part.toolName : part.type.replace(/^tool-/, "");
     const { rawName, friendly } = toolUiMeta(label);
     const isKb = label === "searchKnowledgeBase";
+    const isProposeKb =
+        label === "proposeAddKnowledgeDocument" ||
+        label === "proposeUpdateKnowledgeDocument" ||
+        label === "proposeDeleteKnowledgeDocument";
     const loading = isToolPartAwaitingOutput(part);
-    const ToolIcon = isKb ? Database : Wrench;
+    const ToolIcon = isKb
+        ? Database
+        : label === "proposeDeleteKnowledgeDocument"
+          ? Trash2
+          : label === "proposeUpdateKnowledgeDocument"
+            ? Pencil
+            : label === "proposeAddKnowledgeDocument"
+              ? FilePlus
+              : Wrench;
 
     if (part.state === "output-available") {
         const vectorDebug = isKb ? parseVectorDebugFromToolOutput(part.output) : null;
+        const proposeFail = parseProposeKbToolFailure(part.output);
+        const pendingMutation = parsePendingKnowledgeMutation(part.output);
         return (
             <div className="mt-2 space-y-0">
                 <div className="rounded-lg border border-gray-200 bg-gray-50/80 px-3 py-2 text-xs text-muted-foreground dark:border-gray-600 dark:bg-gray-900/50">
@@ -183,9 +614,24 @@ function ToolStatusRow({ part }: { part: UIMessage["parts"][number] }) {
                     </div>
                     <p className="mt-1 pl-5 text-[11px] leading-snug opacity-90">
                         {friendly}
-                        {isKb ? " · Context retrieved" : " · Finished"}
+                        {isKb ? " · Context retrieved" : pendingMutation ? " · Awaiting your confirmation" : " · Finished"}
                     </p>
                 </div>
+                {proposeFail ? (
+                    <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                        <span className="font-medium">Propose tool: </span>
+                        {proposeFail.error}
+                    </div>
+                ) : null}
+                {pendingMutation?.action === "add" ? (
+                    <DebugKnowledgeAddPanel payload={pendingMutation} />
+                ) : null}
+                {pendingMutation?.action === "update" ? (
+                    <DebugKnowledgeUpdatePanel payload={pendingMutation} />
+                ) : null}
+                {pendingMutation?.action === "delete" ? (
+                    <DebugKnowledgeDeletePanel payload={pendingMutation} />
+                ) : null}
                 {vectorDebug && vectorDebug.hits.length > 0 ? (
                     <KnowledgeBaseDebugAccordion debug={vectorDebug} />
                 ) : null}
@@ -223,7 +669,11 @@ function ToolStatusRow({ part }: { part: UIMessage["parts"][number] }) {
                         </code>
                     </div>
                     <p className="mt-0.5 text-xs text-blue-800/90 dark:text-blue-200/90">
-                        {isKb ? "Searching your knowledge base…" : `${friendly}…`}
+                        {isKb
+                            ? "Searching your knowledge base…"
+                            : isProposeKb
+                              ? "Preparing debug KB action…"
+                              : `${friendly}…`}
                     </p>
                 </div>
             </div>
@@ -361,43 +811,43 @@ export default function ChatbotUI() {
                             const list = convId === activeConv ? messages : (convStore[convId] ?? []);
                             const count = list.length;
                             return (
-                                <button
+                            <button
                                     key={convId}
                                     type="button"
                                     onClick={() => switchConversation(convId)}
                                     disabled={busy}
-                                    className={cn(
-                                        "w-full rounded-lg px-4 py-3 text-left transition-colors duration-200",
+                                className={cn(
+                                    "w-full rounded-lg px-4 py-3 text-left transition-colors duration-200",
                                         busy && convId !== activeConv && "opacity-50 cursor-not-allowed",
                                         activeConv === convId
-                                            ? "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800"
-                                            : "bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700"
-                                    )}
-                                >
-                                    <div className="flex flex-col items-start w-full">
-                                        <div className="flex items-center justify-between w-full mb-2">
-                                            <span className="font-medium text-sm truncate flex-1 text-gray-800 dark:text-gray-100">
+                                        ? "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800"
+                                        : "bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700"
+                                )}
+                            >
+                                <div className="flex flex-col items-start w-full">
+                                    <div className="flex items-center justify-between w-full mb-2">
+                                        <span className="font-medium text-sm truncate flex-1 text-gray-800 dark:text-gray-100">
                                                 {sidebarPreview(list)}
-                                            </span>
-                                            <span className="text-xs text-gray-500 ml-2 flex-shrink-0">
+                                        </span>
+                                        <span className="text-xs text-gray-500 ml-2 flex-shrink-0">
                                                 {count}
-                                            </span>
-                                        </div>
-                                        <div className="flex items-center justify-between w-full">
-                                            <span className="text-xs text-gray-500">
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between w-full">
+                                        <span className="text-xs text-gray-500">
                                                 {count > 0 ? "Active" : "Empty"}
-                                            </span>
+                                        </span>
                                             <div
                                                 className={cn(
-                                                    "w-2 h-2 rounded-full",
+                                            "w-2 h-2 rounded-full",
                                                     activeConv === convId
-                                                        ? "bg-blue-500"
-                                                        : "bg-gray-400 dark:bg-gray-500"
+                                                ? "bg-blue-500"
+                                                : "bg-gray-400 dark:bg-gray-500"
                                                 )}
                                             />
                                         </div>
-                                    </div>
-                                </button>
+                                </div>
+                            </button>
                             );
                         })}
                     </div>
@@ -412,7 +862,7 @@ export default function ChatbotUI() {
                     </div>
                 ) : null}
                 <div className="flex-1 min-h-0 overflow-y-auto">
-                    <div className="p-6 space-y-7 pb-10 max-w-3xl mx-auto">
+                        <div className="p-6 space-y-7 pb-10 max-w-3xl mx-auto">
                             {messages.map((msg) => (
                                 <motion.div
                                     key={msg.id}
@@ -439,7 +889,7 @@ export default function ChatbotUI() {
                                 </motion.div>
                             ))}
                             <div ref={messagesEndRef} />
-                    </div>
+                        </div>
                 </div>
 
                 <div className="sticky bottom-0 bg-gradient-to-t from-gray-100/95 to-transparent dark:from-gray-900/95 backdrop-blur-xl border-t border-gray-200 dark:border-gray-800 p-4">

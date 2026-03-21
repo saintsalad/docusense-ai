@@ -8,6 +8,7 @@ import {
 import { z } from "zod";
 import { chatModel } from "@/lib/chat-model";
 import { fetchKnowledgeBase } from "@/lib/knowledge-context";
+import { getKnowledgeRecordById } from "@/lib/knowledge-record";
 import { isServerDebugEnabled, parseChatMaxOutputTokens } from "@/lib/env-server";
 
 /** Required for streaming UI message chunks; avoids buffering that breaks the client parser. */
@@ -33,6 +34,14 @@ If the tool returns no useful results, say so briefly and answer from general kn
 - Answer in natural language as if you understand the material; avoid "According to your document dated…" unless they want citations or timelines.
 - When the user **does** ask for sources, exact quotes, or dates, you may then include them clearly.`;
 
+const DEBUG_KB_TOOLS_PROMPT = `
+
+DEBUG MODE — knowledge base maintenance tools:
+- After \`searchKnowledgeBase\`, debug payloads include each hit's **record \`id\`** (UUID). Use that \`id\` only — do not invent ids.
+- \`proposeAddKnowledgeDocument\`: **Rare.** Call it **only** when the user **explicitly** asks to add, save, store, or remember something **in their knowledge base** (or equivalent wording), **and** they have given (or you are clearly summarizing **their** material to persist—not generic advice). Do **not** use it for normal answers, tutorials, or because storing might be “helpful.” Do **not** suggest adding to the KB unless they asked. If intent is unclear, answer normally and ask whether they want it saved to the KB. The user edits and must click **Proceed** before insert; do **not** claim the chunk exists until they confirm.
+- \`proposeUpdateKnowledgeDocument\`: propose replacing a record's text. The user can edit the text in the UI and must click **Proceed** before the database updates. Do **not** claim the record changed until they confirm.
+- \`proposeDeleteKnowledgeDocument\`: propose removing a record. The user must confirm in the UI before deletion. Do **not** claim deletion until they confirm.`;
+
 export async function POST(req: Request) {
     try {
         const body: unknown = await req.json();
@@ -51,58 +60,150 @@ export async function POST(req: Request) {
             });
         }
 
-        const tools = {
-            searchKnowledgeBase: tool({
-                description:
-                    "Search the user's uploaded knowledge base (vector store) for relevant text passages. Use only when the user's question depends on their private documents or they ask you to search. If the user may have several separate notes about the same topic or person, use a broad query (e.g. name + a few keywords) so multiple chunks can match — do not over-narrow the query to a single phrasing.",
-                inputSchema: z.object({
-                    query: z
-                        .string()
-                        .min(1)
-                        .describe(
-                            "Search query: key terms, names, or short question. Prefer slightly broader wording when multiple KB entries might exist about the same subject."
-                        ),
-                }),
-                execute: async ({ query }) => {
-                    try {
-                        const { context, hits } = await fetchKnowledgeBase(query);
-                        const debug = isServerDebugEnabled();
-                        const base = {
-                            found: context.length > 0,
-                            context:
-                                context ||
-                                "No matching passages were found in the knowledge base.",
-                        };
-                        if (!debug) return base;
-                        return {
-                            ...base,
-                            vectorDebug: {
-                                query,
-                                hitCount: hits.length,
-                                hits: hits.map((h) => ({
-                                    rank: h.rank,
-                                    distance: h.distance,
-                                    date: h.date,
-                                    document: h.document,
-                                })),
-                            },
-                        };
-                    } catch {
-                        return {
-                            found: false,
-                            context:
-                                "Knowledge base is unavailable. Answer using general knowledge only.",
-                        };
-                    }
-                },
+        const debug = isServerDebugEnabled();
+
+        const searchKnowledgeBase = tool({
+            description:
+                "Search the user's uploaded knowledge base (vector store) for relevant text passages. Use only when the user's question depends on their private documents or they ask you to search. If the user may have several separate notes about the same topic or person, use a broad query (e.g. name + a few keywords) so multiple chunks can match — do not over-narrow the query to a single phrasing.",
+            inputSchema: z.object({
+                query: z
+                    .string()
+                    .min(1)
+                    .describe(
+                        "Search query: key terms, names, or short question. Prefer slightly broader wording when multiple KB entries might exist about the same subject."
+                    ),
             }),
+            execute: async ({ query }) => {
+                try {
+                    const { context, hits } = await fetchKnowledgeBase(query);
+                    const base = {
+                        found: context.length > 0,
+                        context:
+                            context ||
+                            "No matching passages were found in the knowledge base.",
+                    };
+                    if (!debug) return base;
+                    return {
+                        ...base,
+                        vectorDebug: {
+                            query,
+                            hitCount: hits.length,
+                            hits: hits.map((h) => ({
+                                rank: h.rank,
+                                id: h.id,
+                                distance: h.distance,
+                                date: h.date,
+                                document: h.document,
+                            })),
+                        },
+                    };
+                } catch {
+                    return {
+                        found: false,
+                        context:
+                            "Knowledge base is unavailable. Answer using general knowledge only.",
+                    };
+                }
+            },
+        });
+
+        const proposeAddKnowledgeDocument = tool({
+            description:
+                "DEBUG: Propose inserting ONE new knowledge-base chunk. Use ONLY when the user clearly asked to add/save/store/remember something in their knowledge base AND the text is what they want persisted (their notes, specs, etc.)—not for general chat answers or unprompted suggestions. If they did not ask to save to the KB, do not call this. For edits to an existing chunk, use proposeUpdateKnowledgeDocument with the UUID from searchKnowledgeBase. User must click Proceed before the vector DB writes; do not claim success until then.",
+            inputSchema: z.object({
+                newDocumentText: z
+                    .string()
+                    .min(1)
+                    .describe("Full text for the new chunk to store and embed."),
+                source: z
+                    .string()
+                    .min(1)
+                    .optional()
+                    .describe("Optional metadata label (e.g. pasted-note, meeting-notes)."),
+            }),
+            execute: async ({ newDocumentText, source }) => {
+                return {
+                    pendingUserConfirmation: true as const,
+                    action: "add" as const,
+                    proposedDocument: newDocumentText,
+                    source,
+                };
+            },
+        });
+
+        const proposeUpdateKnowledgeDocument = tool({
+            description:
+                "DEBUG: Propose replacing the full document text of a knowledge base record. Pass the Chroma record UUID from a recent searchKnowledgeBase debug hit and the new text. The user will edit if needed and must click Proceed before the vector DB updates.",
+            inputSchema: z.object({
+                recordId: z.string().uuid().describe("UUID from searchKnowledgeBase vectorDebug.hits[].id"),
+                newDocumentText: z
+                    .string()
+                    .min(1)
+                    .describe("Complete replacement text for this chunk (not a diff)."),
+            }),
+            execute: async ({ recordId, newDocumentText }) => {
+                const rec = await getKnowledgeRecordById(recordId);
+                if (!rec) {
+                    return {
+                        pendingUserConfirmation: false as const,
+                        ok: false as const,
+                        error: "Record not found. Search again and use an id from vectorDebug hits.",
+                    };
+                }
+                return {
+                    pendingUserConfirmation: true as const,
+                    action: "update" as const,
+                    recordId,
+                    currentDocument: rec.document,
+                    proposedDocument: newDocumentText,
+                    date: rec.date,
+                    source: rec.source,
+                };
+            },
+        });
+
+        const proposeDeleteKnowledgeDocument = tool({
+            description:
+                "DEBUG: Propose deleting a knowledge base record by id. The user must confirm in the UI before the vector DB deletes it.",
+            inputSchema: z.object({
+                recordId: z.string().uuid().describe("UUID from searchKnowledgeBase vectorDebug.hits[].id"),
+            }),
+            execute: async ({ recordId }) => {
+                const rec = await getKnowledgeRecordById(recordId);
+                if (!rec) {
+                    return {
+                        pendingUserConfirmation: false as const,
+                        ok: false as const,
+                        error: "Record not found. Search again and use an id from vectorDebug hits.",
+                    };
+                }
+                return {
+                    pendingUserConfirmation: true as const,
+                    action: "delete" as const,
+                    recordId,
+                    previewDocument: rec.document,
+                    date: rec.date,
+                    source: rec.source,
+                };
+            },
+        });
+
+        const tools = {
+            searchKnowledgeBase,
+            ...(debug
+                ? {
+                    proposeAddKnowledgeDocument,
+                    proposeUpdateKnowledgeDocument,
+                    proposeDeleteKnowledgeDocument,
+                }
+                : {}),
         };
 
         const modelMessages = await convertToModelMessages(messages, { tools });
 
         const result = streamText({
             model: chatModel,
-            system: SYSTEM_PROMPT,
+            system: debug ? `${SYSTEM_PROMPT}\n${DEBUG_KB_TOOLS_PROMPT}` : SYSTEM_PROMPT,
             messages: modelMessages,
             tools,
             toolChoice: "auto",
