@@ -1,12 +1,5 @@
 import { getChroma, getDefaultEmbeddingFunction } from "@/lib/chroma";
-
-function parseKnowledgeSearchLimit(): number {
-    const raw = process.env.KNOWLEDGE_SEARCH_N_RESULTS;
-    if (raw === undefined || raw === "") return 12;
-    const n = Number.parseInt(raw, 10);
-    if (!Number.isFinite(n) || n < 1) return 12;
-    return Math.min(n, 50);
-}
+import { getKnowledgeSearchNResults } from "@/lib/chatbot-config";
 
 export type KnowledgeHit = {
     rank: number;
@@ -33,7 +26,7 @@ export async function fetchKnowledgeBase(query: string): Promise<KnowledgeFetchR
         embeddingFunction: getDefaultEmbeddingFunction(),
     });
 
-    const nResults = parseKnowledgeSearchLimit();
+    const nResults = getKnowledgeSearchNResults();
 
     const results = await collection.query({
         queryTexts: [query],

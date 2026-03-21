@@ -1,5 +1,6 @@
 import { streamText } from "ai";
-import { chatModel } from "@/lib/chat-model";
+import { getChatModel } from "@/lib/chat-model";
+import { getChatAiName, getChatTemperature } from "@/lib/chatbot-config";
 
 /**
  * Single-shot text completion (AI SDK `useCompletion` default endpoint).
@@ -23,12 +24,12 @@ export async function POST(req: Request) {
             });
         }
 
+        const name = getChatAiName();
         const result = streamText({
-            model: chatModel,
-            system:
-                "You are a helpful expert assistant. Answer clearly and concisely.",
+            model: getChatModel(),
+            system: `You are **${name}**. Answer clearly and concisely.`,
             prompt: prompt.trim(),
-            temperature: 0,
+            temperature: getChatTemperature(),
         });
 
         return result.toTextStreamResponse();

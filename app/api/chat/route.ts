@@ -6,15 +6,16 @@ import {
     type UIMessage,
 } from "ai";
 import { z } from "zod";
-import { chatModel } from "@/lib/chat-model";
+import { getChatModel } from "@/lib/chat-model";
 import { fetchKnowledgeBase } from "@/lib/knowledge-context";
 import { getKnowledgeRecordById } from "@/lib/knowledge-record";
+import { getChatAiName, getChatAiPersonality, getChatTemperature } from "@/lib/chatbot-config";
 import { isServerDebugEnabled, parseChatMaxOutputTokens } from "@/lib/env-server";
 
 /** Required for streaming UI message chunks; avoids buffering that breaks the client parser. */
 export const dynamic = "force-dynamic";
 
-const SYSTEM_PROMPT = `You are a helpful expert AI assistant for software development and general questions.
+const CHAT_SYSTEM_PROMPT_BODY = `You are a capable assistant for software development and general questions.
 
 You can call the tool "searchKnowledgeBase" to retrieve passages from the user's **private knowledge base** (documents they uploaded).
 
@@ -33,6 +34,17 @@ If the tool returns no useful results, say so briefly and answer from general kn
 - By default, **paraphrase and synthesize** what you learned. Do **not** quote long verbatim passages, repeat exact wording from snippets, or cite specific dates/timestamps **unless** the user asks for quotes, sources, exact text, or when something happened.
 - Answer in natural language as if you understand the material; avoid "According to your document dated…" unless they want citations or timelines.
 - When the user **does** ask for sources, exact quotes, or dates, you may then include them clearly.`;
+
+function buildChatSystemPrompt(aiName: string, personality: string | undefined): string {
+    const identity = `**Identity:** Your name is **${aiName}**. When the user asks your name, what to call you, or who you are, answer with this name. You may use it naturally in greetings when appropriate.`;
+
+    const persona =
+        personality && personality.length > 0
+            ? `\n\n**Persona** (configured in Admin → Chatbot Settings or via environment; follow consistently):\n${personality}\n\nExpress this persona in tone and style whenever it does not conflict with accuracy, safety, honesty, or the operational rules below.`
+            : "";
+
+    return `${identity}${persona}\n\n${CHAT_SYSTEM_PROMPT_BODY}`;
+}
 
 const DEBUG_KB_TOOLS_PROMPT = `
 
@@ -61,6 +73,7 @@ export async function POST(req: Request) {
         }
 
         const debug = isServerDebugEnabled();
+        const systemPrompt = buildChatSystemPrompt(getChatAiName(), getChatAiPersonality());
 
         const searchKnowledgeBase = tool({
             description:
@@ -202,12 +215,12 @@ export async function POST(req: Request) {
         const modelMessages = await convertToModelMessages(messages, { tools });
 
         const result = streamText({
-            model: chatModel,
-            system: debug ? `${SYSTEM_PROMPT}\n${DEBUG_KB_TOOLS_PROMPT}` : SYSTEM_PROMPT,
+            model: getChatModel(),
+            system: debug ? `${systemPrompt}\n${DEBUG_KB_TOOLS_PROMPT}` : systemPrompt,
             messages: modelMessages,
             tools,
             toolChoice: "auto",
-            temperature: 0,
+            temperature: getChatTemperature(),
             maxOutputTokens: parseChatMaxOutputTokens(),
             stopWhen: stepCountIs(8),
         });

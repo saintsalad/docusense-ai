@@ -1,4 +1,5 @@
 import { createOpenAI } from "@ai-sdk/openai";
+import { getResolvedOllamaChatModelId } from "@/lib/chatbot-config";
 
 export function getOllamaHost(): string {
     return (process.env.OLLAMA_BASE_URL ?? "http://localhost:11434").replace(/\/$/, "");
@@ -21,5 +22,7 @@ const ollama = createOpenAI({
     apiKey: process.env.OLLAMA_OPENAI_API_KEY ?? "ollama",
 });
 
-/** Chat Completions API (`/v1/chat/completions`). Default `ollama(modelId)` is Responses API (`/v1/responses`) and breaks Ollama (item_reference). */
-export const chatModel = ollama.chat(getOllamaChatModelId());
+/** Resolves model id from `data/chatbot-config.json` or `OLLAMA_CHAT_MODEL`. */
+export function getChatModel() {
+    return ollama.chat(getResolvedOllamaChatModelId());
+}
