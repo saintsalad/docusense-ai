@@ -734,21 +734,25 @@ export default function ChatbotUI() {
     const persistConvIdRef = useRef(activeConv);
     persistConvIdRef.current = activeConv;
 
-    const { messages, sendMessage, status } = useChat({
+    const { messages, sendMessage, status, clearError } = useChat({
         id: activeConv,
         messages: convStore[activeConv] ?? [],
-        onFinish: ({ messages: next }) => {
+        onFinish: ({ messages: next, isError }) => {
             const id = persistConvIdRef.current;
             setConvStore((prev) => ({ ...prev, [id]: next }));
-            setChatError(null);
+            if (!isError) setChatError(null);
         },
         onError: (err) => {
             console.error("Chat error:", err);
             setChatError(err.message || "Something went wrong");
+            queueMicrotask(() => {
+                clearError();
+            });
         },
     });
 
-    const busy = status !== "ready";
+    /** Only block duplicate sends while a request is in progress — not when status is `error` (that would freeze the UI). */
+    const chatInFlight = status === "submitted" || status === "streaming";
 
     const activeAssistantId = useMemo(() => {
         if (status !== "streaming" && status !== "submitted") return null;
@@ -763,24 +767,24 @@ export default function ChatbotUI() {
     }, [messages, activeConv, status, activeAssistantId]);
 
     const createNewConversation = useCallback(() => {
-        if (busy) return;
+        if (chatInFlight) return;
         const id = `conv-${Date.now()}`;
         setConvIds((prev) => [id, ...prev]);
         setConvStore((prev) => ({ ...prev, [id]: [] }));
         setActiveConv(id);
-    }, [busy]);
+    }, [chatInFlight]);
 
     const switchConversation = useCallback(
         (id: string) => {
-            if (busy) return;
+            if (chatInFlight) return;
             setActiveConv(id);
         },
-        [busy]
+        [chatInFlight]
     );
 
     const handleSend = async () => {
         const text = input.trim();
-        if (!text || busy) return;
+        if (!text || chatInFlight) return;
         setInput("");
         setChatError(null);
         persistConvIdRef.current = activeConv;
@@ -799,7 +803,7 @@ export default function ChatbotUI() {
                     <Button
                         size="sm"
                         onClick={createNewConversation}
-                        disabled={busy}
+                        disabled={chatInFlight}
                         className="rounded-full h-8 w-8 p-0 bg-blue-500 hover:bg-blue-600 shadow-lg hover:shadow-xl transition-all duration-200"
                     >
                         <Plus className="h-4 w-4" />
@@ -815,10 +819,10 @@ export default function ChatbotUI() {
                                     key={convId}
                                     type="button"
                                     onClick={() => switchConversation(convId)}
-                                    disabled={busy}
+                                    disabled={chatInFlight}
                                 className={cn(
                                     "w-full rounded-lg px-4 py-3 text-left transition-colors duration-200",
-                                        busy && convId !== activeConv && "opacity-50 cursor-not-allowed",
+                                        chatInFlight && convId !== activeConv && "opacity-50 cursor-not-allowed",
                                         activeConv === convId
                                         ? "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800"
                                         : "bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700"
@@ -901,7 +905,6 @@ export default function ChatbotUI() {
                             }
                             placeholder="Type your message... (Shift+Enter for new line)"
                             className="flex-1 rounded-2xl px-4 py-3 text-base shadow-lg border-2 bg-white/80 dark:bg-gray-800/80 backdrop-blur-md focus:ring-2 focus:ring-blue-500/20 resize-none min-h-[48px]"
-                            disabled={busy}
                             onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
                                 if (e.key === "Enter" && !e.shiftKey) {
                                     e.preventDefault();
@@ -913,7 +916,7 @@ export default function ChatbotUI() {
                         <Button
                             size="icon"
                             onClick={() => void handleSend()}
-                            disabled={!input.trim() || busy}
+                            disabled={!input.trim() || chatInFlight}
                             className="rounded-full shadow-lg h-12 w-12 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             <Send className="h-5 w-5" />
