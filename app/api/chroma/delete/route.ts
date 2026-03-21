@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { chroma } from "@/lib/chroma";
+import { getChroma } from "@/lib/chroma";
 
 export async function DELETE(request: Request) {
     try {
@@ -18,7 +18,7 @@ export async function DELETE(request: Request) {
         }
 
         // Get the collection
-        const collection = await chroma.getCollection({ name: collectionName });
+        const collection = await getChroma().getCollection({ name: collectionName });
 
         // Delete the record
         await collection.delete({

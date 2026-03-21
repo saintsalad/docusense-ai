@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { chroma } from "@/lib/chroma";
+import { getChroma } from "@/lib/chroma";
 
 export async function GET(request: Request) {
     try {
@@ -9,7 +9,7 @@ export async function GET(request: Request) {
         const offset = parseInt(searchParams.get("offset") || "0");
 
         // Get the collection
-        const collection = await chroma.getCollection({ name: collectionName });
+        const collection = await getChroma().getCollection({ name: collectionName });
 
         // Get all documents with metadata
         const results = await collection.get({

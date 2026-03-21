@@ -13,7 +13,7 @@ export default function ChatbotSettings() {
         "You're a helpful expert AI in software development and always answer in a helpful and informative way"
     )
     const [model, setModel] = useState("gpt-oss:20b")
-    const [temperature, setTemperature] = useState("0.7")
+    const [temperature, setTemperature] = useState("0.2")
     const [maxTokens, setMaxTokens] = useState("2000")
     const [enableRAG, setEnableRAG] = useState(true)
     const [ragTopK, setRagTopK] = useState("5")
@@ -36,7 +36,7 @@ export default function ChatbotSettings() {
     const handleReset = () => {
         setSystemPrompt("You're a helpful expert AI in software development and always answer in a helpful and informative way")
         setModel("gpt-oss:20b")
-        setTemperature("0.7")
+        setTemperature("0.2")
         setMaxTokens("2000")
         setEnableRAG(true)
         setRagTopK("5")
@@ -49,7 +49,7 @@ export default function ChatbotSettings() {
                 <div>
                     <h2 className="text-3xl font-bold tracking-tight">Chatbot Settings</h2>
                     <p className="text-muted-foreground mt-1">
-                        Configure your chatbot's behavior and personality
+                        Configure your chatbot&apos;s behavior and personality
                     </p>
                 </div>
                 <div className="flex gap-2">
@@ -130,7 +130,7 @@ export default function ChatbotSettings() {
                         System Prompt
                     </CardTitle>
                     <CardDescription>
-                        Define your chatbot's personality and behavior
+                        Define your chatbot&apos;s personality and behavior
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -142,7 +142,7 @@ export default function ChatbotSettings() {
                         placeholder="You are a helpful assistant..."
                     />
                     <p className="text-xs text-muted-foreground mt-2">
-                        This message is prepended to every conversation to set the AI's behavior
+                        This message is prepended to every conversation to set the AI&apos;s behavior
                     </p>
                 </CardContent>
             </Card>

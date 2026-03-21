@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Database, Search, Trash2, RefreshCw, Filter, FileText, Activity, BookOpen, Edit } from 'lucide-react'
-import { defaultEmbeddingFunction } from '@/lib/chroma'
 
 
 interface CollectionInfo {
@@ -461,7 +460,7 @@ export default function KnowledgeBase() {
                             <div className="flex items-center justify-between py-2 border-b">
                                 <span className="text-sm font-medium">Embedding Model</span>
                                 <span className="text-sm text-muted-foreground">
-                                    {defaultEmbeddingFunction.name}
+                                    default
                                 </span>
                             </div>
                             <div className="flex items-center justify-between py-2 border-b">

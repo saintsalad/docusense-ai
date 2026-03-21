@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
-import { chroma, defaultEmbeddingFunction } from "@/lib/chroma";
+import { getChroma, getDefaultEmbeddingFunction } from "@/lib/chroma";
 
 export async function POST() {
     try {
+        const chroma = getChroma();
+        const defaultEmbeddingFunction = getDefaultEmbeddingFunction();
         // Check if collection already exists
         try {
             const existingCollection = await chroma.getCollection({ name: "docs" });
@@ -35,6 +37,7 @@ export async function POST() {
 
 export async function GET() {
     try {
+        const chroma = getChroma();
         // Check if collection exists
         const collection = await chroma.getCollection({ name: "docs" });
         return NextResponse.json({

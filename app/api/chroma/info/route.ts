@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import { chroma } from "@/lib/chroma";
+import { getChroma } from "@/lib/chroma";
 
 export async function GET() {
     try {
+        const chroma = getChroma();
         const version = await chroma.version();
         const collections = await chroma.listCollections();
 

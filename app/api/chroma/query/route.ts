@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { chroma, defaultEmbeddingFunction } from "@/lib/chroma";
+import { getChroma, getDefaultEmbeddingFunction } from "@/lib/chroma";
 import { getEmbedding } from "@/lib/embedding";
 
 export async function POST(req: Request) {
@@ -8,7 +8,10 @@ export async function POST(req: Request) {
         if (!query) return NextResponse.json({ error: "Missing query" }, { status: 400 });
 
         const qVec = await getEmbedding(query);
-        const collection = await chroma.getCollection({ name: "docs", embeddingFunction: defaultEmbeddingFunction });
+        const collection = await getChroma().getCollection({
+            name: "docs",
+            embeddingFunction: getDefaultEmbeddingFunction(),
+        });
 
         const results = await collection.query({
             queryEmbeddings: [qVec],
