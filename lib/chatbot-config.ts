@@ -1,9 +1,11 @@
 import fs from "fs";
 import path from "path";
 import { z } from "zod";
-import { getEnvChatAiName, getEnvChatAiPersonality } from "@/lib/env-server";
 
 export const CHATBOT_CONFIG_FILENAME = "chatbot-config.json";
+
+/** Used when `aiName` is missing or empty in `data/chatbot-config.json`. */
+export const DEFAULT_AI_NAME = "Assistant";
 
 const AI_NAME_MAX = 80;
 const AI_PERSONALITY_MAX = 8_000;
@@ -11,6 +13,8 @@ const AI_PERSONALITY_MAX = 8_000;
 const fileSchema = z.object({
     aiName: z.string().max(AI_NAME_MAX).optional(),
     aiPersonality: z.string().max(AI_PERSONALITY_MAX).optional(),
+    /** When false, model behaves as a peer participant—not a task-taking assistant (no “how can I help?”). */
+    assistantMode: z.boolean().optional(),
     ollamaChatModel: z.string().min(1).max(200).optional(),
     chatTemperature: z.number().min(0).max(2).optional(),
     knowledgeSearchNResults: z.number().int().min(1).max(50).optional(),
@@ -24,7 +28,7 @@ export function getChatbotConfigPath(): string {
 
 export function readChatbotConfigFile(): ChatbotConfigFile {
     try {
-        const raw = fs.readFileSync(getChatbotConfigPath(), "utf8");
+        const raw = fs.readFileSync(getChatbotConfigPath(), "utf8").replace(/^\uFEFF/, "");
         const j: unknown = JSON.parse(raw);
         const p = fileSchema.safeParse(j);
         return p.success ? p.data : {};
@@ -33,11 +37,17 @@ export function readChatbotConfigFile(): ChatbotConfigFile {
     }
 }
 
-export function writeChatbotConfigFile(partial: ChatbotConfigFile): void {
+export function writeChatbotConfigFile(
+    partial: ChatbotConfigFile,
+    options?: { clearAiPersonality?: boolean }
+): void {
     const dir = path.dirname(getChatbotConfigPath());
     fs.mkdirSync(dir, { recursive: true });
     const prev = readChatbotConfigFile();
     const merged: ChatbotConfigFile = { ...prev, ...partial };
+    if (options?.clearAiPersonality) {
+        delete merged.aiPersonality;
+    }
     fs.writeFileSync(getChatbotConfigPath(), `${JSON.stringify(merged, null, 2)}\n`, "utf8");
 }
 
@@ -52,24 +62,27 @@ function truncatePersonality(raw: string): string {
     return raw.slice(0, AI_PERSONALITY_MAX);
 }
 
-/** Resolved name: JSON file overrides env when `aiName` is set and non-empty after trim. */
+/** Resolved name: non-empty `aiName` in JSON; otherwise `DEFAULT_AI_NAME`. */
 export function getChatAiName(): string {
     const f = readChatbotConfigFile();
     if (f.aiName !== undefined) {
         const t = f.aiName.trim();
         if (t.length > 0) return sanitizeAiName(t);
     }
-    return getEnvChatAiName();
+    return DEFAULT_AI_NAME;
 }
 
-/** Resolved persona: JSON overrides env when `aiPersonality` key is present (empty = none). */
+/**
+ * Resolved persona: non-empty `aiPersonality` in JSON.
+ * Empty / whitespace-only in JSON (or omitted key) means no extra persona block in the system prompt.
+ */
 export function getChatAiPersonality(): string | undefined {
     const f = readChatbotConfigFile();
     if (f.aiPersonality !== undefined) {
         const t = f.aiPersonality.trim();
-        return t.length > 0 ? truncatePersonality(t) : undefined;
+        if (t.length > 0) return truncatePersonality(t);
     }
-    return getEnvChatAiPersonality();
+    return undefined;
 }
 
 function getEnvOllamaChatModelId(): string {
@@ -107,18 +120,30 @@ export function getKnowledgeSearchNResults(): number {
     return parseEnvKnowledgeSearchNResults();
 }
 
-/** Values for the admin settings form (per-field: file value if key exists, else env default). */
+/** Default true. Set `assistantMode: false` in JSON for peer / non-assistant behavior. */
+export function getAssistantMode(): boolean {
+    const f = readChatbotConfigFile();
+    if (f.assistantMode === false) return false;
+    return true;
+}
+
+/** Values for the admin settings form (file field if set; else built-in / env defaults for other fields). */
 export function getChatbotSettingsFormValues(): {
     aiName: string;
     aiPersonality: string;
+    assistantMode: boolean;
     ollamaChatModel: string;
     chatTemperature: number;
     knowledgeSearchNResults: number;
 } {
     const f = readChatbotConfigFile();
+    const storedPersona = f.aiPersonality;
+    const personaForForm =
+        storedPersona !== undefined && storedPersona.trim() !== "" ? storedPersona : "";
     return {
-        aiName: f.aiName !== undefined ? f.aiName : getEnvChatAiName(),
-        aiPersonality: f.aiPersonality !== undefined ? f.aiPersonality : (getEnvChatAiPersonality() ?? ""),
+        aiName: f.aiName !== undefined ? f.aiName : DEFAULT_AI_NAME,
+        aiPersonality: personaForForm,
+        assistantMode: f.assistantMode !== false,
         ollamaChatModel: f.ollamaChatModel !== undefined ? f.ollamaChatModel : getEnvOllamaChatModelId(),
         chatTemperature: f.chatTemperature !== undefined ? f.chatTemperature : 0,
         knowledgeSearchNResults:

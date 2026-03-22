@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 const putSchema = z.object({
     aiName: z.string().max(80),
     aiPersonality: z.string().max(8_000),
+    assistantMode: z.boolean(),
     ollamaChatModel: z.string().min(1).max(200),
     chatTemperature: z.number().min(0).max(2),
     knowledgeSearchNResults: z.number().int().min(1).max(50),
@@ -48,14 +49,17 @@ export async function PUT(req: Request) {
     const d = parsed.data;
     const partial: ChatbotConfigFile = {
         aiName: d.aiName.trim(),
-        aiPersonality: d.aiPersonality,
+        assistantMode: d.assistantMode,
         ollamaChatModel: d.ollamaChatModel.trim(),
         chatTemperature: d.chatTemperature,
         knowledgeSearchNResults: d.knowledgeSearchNResults,
     };
+    if (d.aiPersonality.trim() !== "") {
+        partial.aiPersonality = d.aiPersonality;
+    }
 
     try {
-        writeChatbotConfigFile(partial);
+        writeChatbotConfigFile(partial, { clearAiPersonality: d.aiPersonality.trim() === "" });
         return NextResponse.json({ ok: true as const, config: getChatbotSettingsFormValues() });
     } catch (e) {
         console.error("chatbot-config PUT:", e);

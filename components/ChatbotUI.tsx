@@ -20,6 +20,7 @@ import {
     Trash2,
     AlertTriangle,
     FilePlus,
+    Bug,
 } from "lucide-react";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 
@@ -98,12 +99,24 @@ type VectorDebugPayload = {
     hitCount: number;
     hits: Array<{
         rank: number;
-    id: string;
+        id: string;
         distance: number;
         date: string;
         document: string;
     }>;
 };
+
+type KbSearchPublicOutput = {
+    found: boolean;
+    context: string;
+};
+
+function parseKbSearchPublicOutput(output: unknown): KbSearchPublicOutput | null {
+    if (typeof output !== "object" || output === null) return null;
+    const o = output as Record<string, unknown>;
+    if (typeof o.found !== "boolean" || typeof o.context !== "string") return null;
+    return { found: o.found, context: o.context };
+}
 
 function parseVectorDebugFromToolOutput(output: unknown): VectorDebugPayload | null {
     if (typeof output !== "object" || output === null) return null;
@@ -528,6 +541,23 @@ function DebugKnowledgeDeletePanel({ payload }: { payload: PendingKbDelete }) {
     );
 }
 
+function KnowledgeBaseRetrievedSummary({ found, context }: KbSearchPublicOutput) {
+    const previewMax = 6_000;
+    const text = context.length > previewMax ? `${context.slice(0, previewMax)}…` : context;
+    return (
+        <details className="mt-2 rounded-md border border-sky-200/90 bg-sky-50/60 text-left dark:border-sky-900/50 dark:bg-sky-950/25">
+            <summary className="cursor-pointer select-none list-none px-2 py-2 text-[11px] font-semibold text-sky-950 dark:text-sky-100 [&::-webkit-details-marker]:hidden">
+                {found ? "Retrieved from knowledge base" : "Knowledge base search (no matches)"}
+            </summary>
+            <div className="max-h-72 overflow-y-auto border-t border-sky-200/70 p-2 dark:border-sky-900/45">
+                <pre className="whitespace-pre-wrap break-words text-[11px] text-gray-800 dark:text-gray-200">
+                    {text}
+                </pre>
+            </div>
+        </details>
+    );
+}
+
 function KnowledgeBaseDebugAccordion({ debug }: { debug: VectorDebugPayload }) {
     return (
         <details className="mt-2 rounded-md border border-amber-200/90 bg-amber-50/60 text-left dark:border-amber-900/55 dark:bg-amber-950/25">
@@ -589,15 +619,16 @@ function ToolStatusRow({ part }: { part: UIMessage["parts"][number] }) {
     const ToolIcon = isKb
         ? Database
         : label === "proposeDeleteKnowledgeDocument"
-          ? Trash2
-          : label === "proposeUpdateKnowledgeDocument"
-            ? Pencil
-            : label === "proposeAddKnowledgeDocument"
-              ? FilePlus
-              : Wrench;
+            ? Trash2
+            : label === "proposeUpdateKnowledgeDocument"
+                ? Pencil
+                : label === "proposeAddKnowledgeDocument"
+                    ? FilePlus
+                    : Wrench;
 
     if (part.state === "output-available") {
         const vectorDebug = isKb ? parseVectorDebugFromToolOutput(part.output) : null;
+        const kbPublic = isKb ? parseKbSearchPublicOutput(part.output) : null;
         const proposeFail = parseProposeKbToolFailure(part.output);
         const pendingMutation = parsePendingKnowledgeMutation(part.output);
         return (
@@ -634,6 +665,8 @@ function ToolStatusRow({ part }: { part: UIMessage["parts"][number] }) {
                 ) : null}
                 {vectorDebug && vectorDebug.hits.length > 0 ? (
                     <KnowledgeBaseDebugAccordion debug={vectorDebug} />
+                ) : kbPublic ? (
+                    <KnowledgeBaseRetrievedSummary found={kbPublic.found} context={kbPublic.context} />
                 ) : null}
             </div>
         );
@@ -672,8 +705,8 @@ function ToolStatusRow({ part }: { part: UIMessage["parts"][number] }) {
                         {isKb
                             ? "Searching your knowledge base…"
                             : isProposeKb
-                              ? "Preparing debug KB action…"
-                              : `${friendly}…`}
+                                ? "Preparing debug KB action…"
+                                : `${friendly}…`}
                     </p>
                 </div>
             </div>
@@ -708,6 +741,46 @@ function AssistantBubble({
     );
 }
 
+type DebugChatContext = {
+    aiName: string;
+    aiPersonality: string;
+    assistantMode: boolean;
+};
+
+function DebugChatIdentityBanner({ ctx }: { ctx: DebugChatContext }) {
+    const hasPersona = ctx.aiPersonality.trim().length > 0;
+    return (
+        <div className="shrink-0 mx-4 mt-4 max-w-3xl md:mx-auto w-[calc(100%-2rem)] rounded-lg border border-amber-200/90 bg-amber-50/90 px-4 py-3 text-left text-xs text-amber-950 dark:border-amber-900/55 dark:bg-amber-950/30 dark:text-amber-100">
+            <div className="mb-2 flex items-center gap-2 font-semibold">
+                <Bug className="h-4 w-4 shrink-0" />
+                DEBUG · Assistant identity (system prompt)
+            </div>
+            <div className="space-y-2">
+                <div>
+                    <span className="font-medium text-amber-900/90 dark:text-amber-200/90">Name: </span>
+                    <span className="font-mono text-[11px]">{ctx.aiName}</span>
+                </div>
+                <div>
+                    <span className="font-medium text-amber-900/90 dark:text-amber-200/90">Assistant mode: </span>
+                    <span className="font-mono text-[11px]">{ctx.assistantMode ? "on" : "off (peer / no solicit)"}</span>
+                </div>
+                <div>
+                    <span className="font-medium text-amber-900/90 dark:text-amber-200/90">Personality: </span>
+                    {hasPersona ? (
+                        <pre className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded border border-amber-200/70 bg-white/80 p-2 font-mono text-[11px] text-amber-950 dark:border-amber-900/40 dark:bg-gray-950/80 dark:text-amber-50">
+                            {ctx.aiPersonality}
+                        </pre>
+                    ) : (
+                        <span className="text-amber-800/80 italic dark:text-amber-200/70">
+                            (none — not set in chatbot-config.json)
+                        </span>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
 const welcomeMessages: UIMessage[] = [
     {
         id: "seed-u",
@@ -730,6 +803,7 @@ export default function ChatbotUI() {
     const [activeConv, setActiveConv] = useState("conv-1");
     const [input, setInput] = useState("");
     const [chatError, setChatError] = useState<string | null>(null);
+    const [debugIdentity, setDebugIdentity] = useState<DebugChatContext | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const persistConvIdRef = useRef(activeConv);
     persistConvIdRef.current = activeConv;
@@ -765,6 +839,48 @@ export default function ChatbotUI() {
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages, activeConv, status, activeAssistantId]);
+
+    const loadDebugIdentity = useCallback(async () => {
+        try {
+            const res = await fetch(`/api/chat/debug-context?t=${Date.now()}`, { cache: "no-store" });
+            const data = (await res.json()) as {
+                debug?: boolean;
+                aiName?: string;
+                aiPersonality?: string;
+                assistantMode?: boolean;
+            };
+            if (data.debug === true && typeof data.aiName === "string") {
+                setDebugIdentity({
+                    aiName: data.aiName,
+                    aiPersonality: typeof data.aiPersonality === "string" ? data.aiPersonality : "",
+                    assistantMode: typeof data.assistantMode === "boolean" ? data.assistantMode : true,
+                });
+            } else {
+                setDebugIdentity(null);
+            }
+        } catch {
+            setDebugIdentity(null);
+        }
+    }, []);
+
+    useEffect(() => {
+        void loadDebugIdentity();
+    }, [loadDebugIdentity]);
+
+    useEffect(() => {
+        const onFocus = () => {
+            void loadDebugIdentity();
+        };
+        const onVis = () => {
+            if (document.visibilityState === "visible") void loadDebugIdentity();
+        };
+        window.addEventListener("focus", onFocus);
+        document.addEventListener("visibilitychange", onVis);
+        return () => {
+            window.removeEventListener("focus", onFocus);
+            document.removeEventListener("visibilitychange", onVis);
+        };
+    }, [loadDebugIdentity]);
 
     const createNewConversation = useCallback(() => {
         if (chatInFlight) return;
@@ -815,43 +931,43 @@ export default function ChatbotUI() {
                             const list = convId === activeConv ? messages : (convStore[convId] ?? []);
                             const count = list.length;
                             return (
-                            <button
+                                <button
                                     key={convId}
                                     type="button"
                                     onClick={() => switchConversation(convId)}
                                     disabled={chatInFlight}
-                                className={cn(
-                                    "w-full rounded-lg px-4 py-3 text-left transition-colors duration-200",
+                                    className={cn(
+                                        "w-full rounded-lg px-4 py-3 text-left transition-colors duration-200",
                                         chatInFlight && convId !== activeConv && "opacity-50 cursor-not-allowed",
                                         activeConv === convId
-                                        ? "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800"
-                                        : "bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700"
-                                )}
-                            >
-                                <div className="flex flex-col items-start w-full">
-                                    <div className="flex items-center justify-between w-full mb-2">
-                                        <span className="font-medium text-sm truncate flex-1 text-gray-800 dark:text-gray-100">
+                                            ? "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800"
+                                            : "bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700"
+                                    )}
+                                >
+                                    <div className="flex flex-col items-start w-full">
+                                        <div className="flex items-center justify-between w-full mb-2">
+                                            <span className="font-medium text-sm truncate flex-1 text-gray-800 dark:text-gray-100">
                                                 {sidebarPreview(list)}
-                                        </span>
-                                        <span className="text-xs text-gray-500 ml-2 flex-shrink-0">
+                                            </span>
+                                            <span className="text-xs text-gray-500 ml-2 flex-shrink-0">
                                                 {count}
-                                        </span>
-                                    </div>
-                                    <div className="flex items-center justify-between w-full">
-                                        <span className="text-xs text-gray-500">
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center justify-between w-full">
+                                            <span className="text-xs text-gray-500">
                                                 {count > 0 ? "Active" : "Empty"}
-                                        </span>
+                                            </span>
                                             <div
                                                 className={cn(
-                                            "w-2 h-2 rounded-full",
+                                                    "w-2 h-2 rounded-full",
                                                     activeConv === convId
-                                                ? "bg-blue-500"
-                                                : "bg-gray-400 dark:bg-gray-500"
+                                                        ? "bg-blue-500"
+                                                        : "bg-gray-400 dark:bg-gray-500"
                                                 )}
                                             />
                                         </div>
-                                </div>
-                            </button>
+                                    </div>
+                                </button>
                             );
                         })}
                     </div>
@@ -860,40 +976,41 @@ export default function ChatbotUI() {
 
             {/* Chat area */}
             <div className="flex-1 flex flex-col min-h-0">
+                {debugIdentity ? <DebugChatIdentityBanner ctx={debugIdentity} /> : null}
                 {chatError ? (
                     <div className="shrink-0 mx-4 mt-4 max-w-3xl md:mx-auto w-[calc(100%-2rem)] rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">
                         {chatError}
                     </div>
                 ) : null}
                 <div className="flex-1 min-h-0 overflow-y-auto">
-                        <div className="p-6 space-y-7 pb-10 max-w-3xl mx-auto">
-                            {messages.map((msg) => (
-                                <motion.div
-                                    key={msg.id}
-                                    initial={{ opacity: 0, y: 10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={{ duration: 0.3 }}
-                                    className={cn(
-                                        "rounded-3xl px-4 py-3 shadow-sm backdrop-blur-sm",
-                                        msg.role === "user"
-                                            ? "ml-auto bg-blue-500 text-white max-w-xl w-fit"
-                                            : "w-fit bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 max-w-2xl"
-                                    )}
-                                >
-                                    {msg.role === "assistant" ? (
-                                        <AssistantBubble
-                                            message={msg}
-                                            isActiveAssistant={msg.id === activeAssistantId}
-                                        />
-                                    ) : (
-                                        <span className="whitespace-pre-wrap break-words">
-                                            {textFromMessage(msg)}
-                                        </span>
-                                    )}
-                                </motion.div>
-                            ))}
-                            <div ref={messagesEndRef} />
-                        </div>
+                    <div className="p-6 space-y-7 pb-10 max-w-3xl mx-auto">
+                        {messages.map((msg) => (
+                            <motion.div
+                                key={msg.id}
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ duration: 0.3 }}
+                                className={cn(
+                                    "rounded-3xl px-4 py-3 shadow-sm backdrop-blur-sm",
+                                    msg.role === "user"
+                                        ? "ml-auto bg-blue-500 text-white max-w-xl w-fit"
+                                        : "w-fit bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 max-w-2xl"
+                                )}
+                            >
+                                {msg.role === "assistant" ? (
+                                    <AssistantBubble
+                                        message={msg}
+                                        isActiveAssistant={msg.id === activeAssistantId}
+                                    />
+                                ) : (
+                                    <span className="whitespace-pre-wrap break-words">
+                                        {textFromMessage(msg)}
+                                    </span>
+                                )}
+                            </motion.div>
+                        ))}
+                        <div ref={messagesEndRef} />
+                    </div>
                 </div>
 
                 <div className="sticky bottom-0 bg-gradient-to-t from-gray-100/95 to-transparent dark:from-gray-900/95 backdrop-blur-xl border-t border-gray-200 dark:border-gray-800 p-4">

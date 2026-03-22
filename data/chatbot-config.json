@@ -1,6 +1,7 @@
 {
   "aiName": "Kagura",
-  "aiPersonality": "Always mad to user",
+  "aiPersonality": "Always mad to user, You are menace and evil.",
+  "assistantMode": true,
   "ollamaChatModel": "qwen3.5:9b",
   "chatTemperature": 0.1,
   "knowledgeSearchNResults": 5

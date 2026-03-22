@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +12,7 @@ import { Settings, Brain, Zap, Save, RotateCcw, Loader2, AlertCircle, CheckCircl
 type FormConfig = {
     aiName: string;
     aiPersonality: string;
+    assistantMode: boolean;
     ollamaChatModel: string;
     chatTemperature: number;
     knowledgeSearchNResults: number;
@@ -19,6 +21,7 @@ type FormConfig = {
 const defaultForm: FormConfig = {
     aiName: "Assistant",
     aiPersonality: "",
+    assistantMode: true,
     ollamaChatModel: "gpt-oss:20b",
     chatTemperature: 0,
     knowledgeSearchNResults: 12,
@@ -48,7 +51,11 @@ export default function ChatbotSettings() {
                 setError(msg);
                 return;
             }
-            setForm(data.config);
+            const cfg = data.config;
+            setForm({
+                ...cfg,
+                assistantMode: typeof cfg.assistantMode === "boolean" ? cfg.assistantMode : true,
+            });
         } catch {
             setError("Network error loading settings");
         } finally {
@@ -71,6 +78,7 @@ export default function ChatbotSettings() {
                 body: JSON.stringify({
                     aiName: form.aiName,
                     aiPersonality: form.aiPersonality,
+                    assistantMode: form.assistantMode,
                     ollamaChatModel: form.ollamaChatModel.trim(),
                     chatTemperature: form.chatTemperature,
                     knowledgeSearchNResults: form.knowledgeSearchNResults,
@@ -141,6 +149,15 @@ export default function ChatbotSettings() {
                 </div>
             ) : null}
 
+            {loading ? (
+                <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed py-20 text-muted-foreground">
+                    <Loader2 className="h-8 w-8 animate-spin" />
+                    <p className="text-sm">Loading configuration from server…</p>
+                </div>
+            ) : null}
+
+            {!loading ? (
+                <>
             <Card>
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2">
@@ -148,12 +165,31 @@ export default function ChatbotSettings() {
                         Identity &amp; persona
                     </CardTitle>
                     <CardDescription>
-                        Shown in the chat system prompt. <code className="text-xs">AI_NAME</code> /{" "}
-                        <code className="text-xs">AI_PERSONALITY</code> in <code className="text-xs">.env</code> apply
-                        only when a field is not stored in the JSON file.
+                        Stored in <code className="text-xs">data/chatbot-config.json</code> and merged into the chat
+                        system prompt. Default name is &quot;Assistant&quot; if left blank in the file.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                    <div className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-0.5">
+                            <p id="assistant-mode-heading" className="text-sm font-medium">
+                                Assistant mode
+                            </p>
+                            <p className="text-xs text-muted-foreground max-w-prose">
+                                <strong>On:</strong> helpful assistant style. <strong>Off:</strong> participant in the
+                                chat (human-like or plainly an AI)—does not ask what you want, invite questions, or end
+                                with &quot;how can I help?&quot;-style prompts.
+                            </p>
+                        </div>
+                        <Switch
+                            className="shrink-0"
+                            checked={form.assistantMode}
+                            onCheckedChange={(assistantMode) =>
+                                setForm((f) => ({ ...f, assistantMode }))
+                            }
+                            aria-labelledby="assistant-mode-heading"
+                        />
+                    </div>
                     <div className="space-y-2">
                         <label htmlFor="aiName" className="text-sm font-medium">
                             Assistant name
@@ -183,8 +219,8 @@ export default function ChatbotSettings() {
                             disabled={loading}
                         />
                         <p className="text-xs text-muted-foreground">
-                            {form.aiPersonality.length} / 8000 — leave empty for no extra persona (env fallback if
-                            set).
+                            {form.aiPersonality.length} / 8000 — leave empty for no persona section in the system
+                            prompt.
                         </p>
                     </div>
                 </CardContent>
@@ -277,6 +313,8 @@ export default function ChatbotSettings() {
                     </div>
                 </CardContent>
             </Card>
+                </>
+            ) : null}
         </div>
     );
 }
