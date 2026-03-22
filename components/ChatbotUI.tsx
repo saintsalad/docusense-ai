@@ -1,7 +1,7 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { useState, useEffect, useRef, useCallback, useMemo, memo, useLayoutEffect } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, memo, useLayoutEffect, createContext, useContext } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { isReasoningUIPart, isToolUIPart, type UIMessage } from "ai";
 import { cn } from "@/lib/utils";
@@ -42,6 +42,21 @@ import {
     X,
 } from "lucide-react";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
+
+/**
+ * Prefix for synthetic user messages that report the outcome of a tool confirmation.
+ * The AI sees this in history and acknowledges accordingly.
+ */
+const TOOL_OUTCOME_MARKER = "[TOOL_OUTCOME] ";
+
+/** Truncate long document text so outcome messages stay concise for the model. */
+function outcomeSnippet(text: string, max = 600): string {
+    const t = text.trim();
+    return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
+type ChatActionsContextValue = { onToolSettled: (msg: string) => void };
+const ChatActionsContext = createContext<ChatActionsContextValue | null>(null);
 
 const TOOL_FRIENDLY_NAME: Record<string, string> = {
     searchKnowledgeBase: "Knowledge base search",
@@ -252,12 +267,12 @@ function parsePendingKnowledgeMutation(output: unknown): PendingKbUpdate | Pendi
 }
 
 function DebugKnowledgeAddPanel({ payload }: { payload: PendingKbAdd }) {
+    const chatActions = useContext(ChatActionsContext);
     const [edited, setEdited] = useState(payload.proposedDocument);
     const [sourceEdited, setSourceEdited] = useState(payload.source ?? "");
     const [loading, setLoading] = useState(false);
-    const [phase, setPhase] = useState<"edit" | "ok" | "err">("edit");
+    const [phase, setPhase] = useState<"edit" | "ok" | "cancelled" | "err">("edit");
     const [errMsg, setErrMsg] = useState<string | null>(null);
-    const [newRecordId, setNewRecordId] = useState<string | null>(null);
 
     const onProceed = async () => {
         const text = edited.trim();
@@ -284,8 +299,12 @@ function DebugKnowledgeAddPanel({ payload }: { payload: PendingKbAdd }) {
                 setPhase("err");
                 return;
             }
-            if (typeof data.recordId === "string") setNewRecordId(data.recordId);
+            const rid = typeof data.recordId === "string" ? data.recordId : null;
+            const wasEdited = text !== payload.proposedDocument.trim();
             setPhase("ok");
+            chatActions?.onToolSettled(
+                `${TOOL_OUTCOME_MARKER}proposeAddKnowledgeDocument: User confirmed.${wasEdited ? " (User edited the document before saving.)" : ""} Document added to knowledge base.${rid ? ` (id: ${rid})` : ""}\nSaved content:\n${outcomeSnippet(text)}`
+            );
         } catch {
             setErrMsg("Network error");
             setPhase("err");
@@ -294,19 +313,14 @@ function DebugKnowledgeAddPanel({ payload }: { payload: PendingKbAdd }) {
         }
     };
 
-    if (phase === "ok") {
-        return (
-            <div className="mt-2 rounded-md border border-green-200/90 bg-green-50/80 px-3 py-2 text-xs text-green-950 dark:border-green-900/50 dark:bg-green-950/30 dark:text-green-100">
-                <div className="flex items-center gap-2 font-medium">
-                    <CheckCircle className="h-3.5 w-3.5 shrink-0" />
-                    New chunk added to vector DB
-                </div>
-                {newRecordId ? (
-                    <p className="mt-1 font-mono text-[10px] opacity-90">id: {newRecordId}</p>
-                ) : null}
-            </div>
+    const onCancel = () => {
+        setPhase("cancelled");
+        chatActions?.onToolSettled(
+            `${TOOL_OUTCOME_MARKER}proposeAddKnowledgeDocument: User cancelled. Document was NOT added to knowledge base.`
         );
-    }
+    };
+
+    if (phase === "ok" || phase === "cancelled") return null;
 
     return (
         <div className="mt-2 rounded-md border border-emerald-200/90 bg-emerald-50/70 p-3 text-left dark:border-emerald-900/55 dark:bg-emerald-950/25">
@@ -338,30 +352,41 @@ function DebugKnowledgeAddPanel({ payload }: { payload: PendingKbAdd }) {
                 />
             </div>
             {errMsg ? <p className="mt-2 text-xs text-destructive">{errMsg}</p> : null}
-            <Button
-                type="button"
-                size="sm"
-                className="mt-3"
-                onClick={() => void onProceed()}
-                disabled={loading || !edited.trim()}
-            >
-                {loading ? (
-                    <>
-                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                        Adding…
-                    </>
-                ) : (
-                    "Proceed"
-                )}
-            </Button>
+            <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onCancel}
+                    disabled={loading}
+                >
+                    Cancel
+                </Button>
+                <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void onProceed()}
+                    disabled={loading || !edited.trim()}
+                >
+                    {loading ? (
+                        <>
+                            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                            Adding…
+                        </>
+                    ) : (
+                        "Proceed"
+                    )}
+                </Button>
+            </div>
         </div>
     );
 }
 
 function DebugKnowledgeUpdatePanel({ payload }: { payload: PendingKbUpdate }) {
+    const chatActions = useContext(ChatActionsContext);
     const [edited, setEdited] = useState(payload.proposedDocument);
     const [loading, setLoading] = useState(false);
-    const [phase, setPhase] = useState<"edit" | "ok" | "err">("edit");
+    const [phase, setPhase] = useState<"edit" | "ok" | "cancelled" | "err">("edit");
     const [errMsg, setErrMsg] = useState<string | null>(null);
 
     const onProceed = async () => {
@@ -385,7 +410,11 @@ function DebugKnowledgeUpdatePanel({ payload }: { payload: PendingKbUpdate }) {
                 setPhase("err");
                 return;
             }
+            const wasEdited = text !== payload.proposedDocument.trim();
             setPhase("ok");
+            chatActions?.onToolSettled(
+                `${TOOL_OUTCOME_MARKER}proposeUpdateKnowledgeDocument: User confirmed.${wasEdited ? " (User edited the proposed text before saving.)" : " (User accepted the proposed text as-is.)"} Record updated. (id: ${payload.recordId})\nSaved content:\n${outcomeSnippet(text)}`
+            );
         } catch {
             setErrMsg("Network error");
             setPhase("err");
@@ -394,17 +423,14 @@ function DebugKnowledgeUpdatePanel({ payload }: { payload: PendingKbUpdate }) {
         }
     };
 
-    if (phase === "ok") {
-        return (
-            <div className="mt-2 rounded-md border border-green-200/90 bg-green-50/80 px-3 py-2 text-xs text-green-950 dark:border-green-900/50 dark:bg-green-950/30 dark:text-green-100">
-                <div className="flex items-center gap-2 font-medium">
-                    <CheckCircle className="h-3.5 w-3.5 shrink-0" />
-                    Vector DB updated
-                </div>
-                <p className="mt-1 font-mono text-[10px] opacity-90">id: {payload.recordId}</p>
-            </div>
+    const onCancel = () => {
+        setPhase("cancelled");
+        chatActions?.onToolSettled(
+            `${TOOL_OUTCOME_MARKER}proposeUpdateKnowledgeDocument: User cancelled. Record was NOT updated. (id: ${payload.recordId})`
         );
-    }
+    };
+
+    if (phase === "ok" || phase === "cancelled") return null;
 
     return (
         <div className="mt-2 rounded-md border border-amber-200/90 bg-amber-50/70 p-3 text-left dark:border-amber-900/55 dark:bg-amber-950/25">
@@ -435,27 +461,38 @@ function DebugKnowledgeUpdatePanel({ payload }: { payload: PendingKbUpdate }) {
                 {payload.source ? <span>source: {payload.source}</span> : null}
             </div>
             {errMsg ? <p className="mt-2 text-xs text-destructive">{errMsg}</p> : null}
-            <Button
-                type="button"
-                size="sm"
-                className="mt-3"
-                onClick={() => void onProceed()}
-                disabled={loading || !edited.trim()}
-            >
-                {loading ? (
-                    <>
-                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                        Updating…
-                    </>
-                ) : (
-                    "Proceed"
-                )}
-            </Button>
+            <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onCancel}
+                    disabled={loading}
+                >
+                    Cancel
+                </Button>
+                <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void onProceed()}
+                    disabled={loading || !edited.trim()}
+                >
+                    {loading ? (
+                        <>
+                            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                            Updating…
+                        </>
+                    ) : (
+                        "Proceed"
+                    )}
+                </Button>
+            </div>
         </div>
     );
 }
 
 function DebugKnowledgeDeletePanel({ payload }: { payload: PendingKbDelete }) {
+    const chatActions = useContext(ChatActionsContext);
     const [loading, setLoading] = useState(false);
     const [phase, setPhase] = useState<"confirm" | "ok" | "cancelled" | "err">("confirm");
     const [errMsg, setErrMsg] = useState<string | null>(null);
@@ -480,6 +517,9 @@ function DebugKnowledgeDeletePanel({ payload }: { payload: PendingKbDelete }) {
                 return;
             }
             setPhase("ok");
+            chatActions?.onToolSettled(
+                `${TOOL_OUTCOME_MARKER}proposeDeleteKnowledgeDocument: User confirmed deletion. Record permanently removed. (id: ${payload.recordId})\nDeleted content:\n${outcomeSnippet(payload.previewDocument)}`
+            );
         } catch {
             setErrMsg("Network error");
             setPhase("err");
@@ -488,25 +528,7 @@ function DebugKnowledgeDeletePanel({ payload }: { payload: PendingKbDelete }) {
         }
     };
 
-    if (phase === "ok") {
-        return (
-            <div className="mt-2 rounded-md border border-green-200/90 bg-green-50/80 px-3 py-2 text-xs text-green-950 dark:border-green-900/50 dark:bg-green-950/30 dark:text-green-100">
-                <div className="flex items-center gap-2 font-medium">
-                    <CheckCircle className="h-3.5 w-3.5 shrink-0" />
-                    Record removed from vector DB
-                </div>
-                <p className="mt-1 font-mono text-[10px] opacity-90">id: {payload.recordId}</p>
-            </div>
-        );
-    }
-
-    if (phase === "cancelled") {
-        return (
-            <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-muted-foreground dark:border-gray-700 dark:bg-gray-900/50">
-                Cancelled — nothing was deleted.
-            </div>
-        );
-    }
+    if (phase === "ok" || phase === "cancelled") return null;
 
     return (
         <div className="mt-2 rounded-md border border-red-200/90 bg-red-50/60 p-3 text-left dark:border-red-900/50 dark:bg-red-950/20">
@@ -535,7 +557,12 @@ function DebugKnowledgeDeletePanel({ payload }: { payload: PendingKbDelete }) {
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setPhase("cancelled")}
+                    onClick={() => {
+                        setPhase("cancelled");
+                        chatActions?.onToolSettled(
+                            `${TOOL_OUTCOME_MARKER}proposeDeleteKnowledgeDocument: User cancelled deletion. Record was NOT deleted. (id: ${payload.recordId})`
+                        );
+                    }}
                     disabled={loading}
                 >
                     Cancel
@@ -557,6 +584,35 @@ function DebugKnowledgeDeletePanel({ payload }: { payload: PendingKbDelete }) {
                     )}
                 </Button>
             </div>
+        </div>
+    );
+}
+
+/** Compact pill rendered in place of a regular user bubble for [TOOL_OUTCOME] messages. */
+function ToolOutcomePill({ label }: { label: string }) {
+    const cancelled = /cancell?ed/i.test(label);
+    // First line only, strip tool prefix + all parentheticals (ids, edit notes, etc.)
+    const display = label
+        .split("\n")[0]
+        .replace(/^[^:]+:\s*/, "")
+        .replace(/\s*\([^)]*\)/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    return (
+        <div
+            className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium",
+                cancelled
+                    ? "border-border bg-muted/60 text-muted-foreground"
+                    : "border-green-200/80 bg-green-50/80 text-green-800 dark:border-green-900/50 dark:bg-green-950/30 dark:text-green-200"
+            )}
+        >
+            {cancelled ? (
+                <X className="size-3 shrink-0" />
+            ) : (
+                <CheckCircle className="size-3 shrink-0 text-green-600 dark:text-green-400" />
+            )}
+            {display}
         </div>
     );
 }
@@ -775,6 +831,18 @@ const ChatMessageRow = memo(
     }) {
         const isUser = msg.role === "user";
 
+        // Tool outcome messages are rendered as compact centered pills, not full bubbles.
+        if (isUser) {
+            const text = textFromMessage(msg);
+            if (text.startsWith(TOOL_OUTCOME_MARKER)) {
+                return (
+                    <div className="mb-4 flex justify-center">
+                        <ToolOutcomePill label={text.slice(TOOL_OUTCOME_MARKER.length)} />
+                    </div>
+                );
+            }
+        }
+
         const metaRow = (
             <div className={isUser ? chatMessage.metaUser : chatMessage.metaAssistant}>
                 <span className={chatMessage.metaName}>
@@ -911,7 +979,7 @@ export default function ChatbotUI() {
     const persistConvIdRef = useRef(activeConv);
     persistConvIdRef.current = activeConv;
 
-    const { messages, sendMessage, status, clearError } = useChat({
+    const { messages: rawMessages, sendMessage, status, clearError } = useChat({
         id: activeConv,
         messages: convStore[activeConv] ?? [],
         onFinish: ({ messages: next, isError }) => {
@@ -927,6 +995,20 @@ export default function ChatbotUI() {
             });
         },
     });
+
+    /**
+     * Deduplicate by message ID. The AI SDK can produce duplicate entries when
+     * sendMessage fires a new turn while controlled `messages` (from convStore)
+     * and the SDK's internal state both carry the same message after onFinish.
+     */
+    const messages = useMemo(() => {
+        const seen = new Set<string>();
+        return rawMessages.filter((msg) => {
+            if (seen.has(msg.id)) return false;
+            seen.add(msg.id);
+            return true;
+        });
+    }, [rawMessages]);
 
     /** Only block duplicate sends while a request is in progress — not when status is `error` (that would freeze the UI). */
     const chatInFlight = status === "submitted" || status === "streaming";
@@ -1060,7 +1142,13 @@ export default function ChatbotUI() {
         await sendMessage({ text });
     };
 
+    const onToolSettled = useCallback((msg: string) => {
+        stickToBottomRef.current = true;
+        void sendMessage({ text: msg });
+    }, [sendMessage]);
+
     return (
+        <ChatActionsContext.Provider value={{ onToolSettled }}>
         <div className={chatShell.root}>
             {/* ── Mobile sidebar backdrop ── */}
             {mobileSidebarOpen && (
@@ -1266,5 +1354,6 @@ export default function ChatbotUI() {
                 </div>
             </div>
         </div>
+        </ChatActionsContext.Provider>
     );
 }

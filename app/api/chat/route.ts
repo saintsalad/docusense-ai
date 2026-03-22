@@ -85,7 +85,9 @@ DEBUG MODE — knowledge base maintenance tools:
 - After \`searchKnowledgeBase\`, debug payloads include each hit's **record \`id\`** (UUID). Use that \`id\` only — do not invent ids.
 - \`proposeAddKnowledgeDocument\`: **Rare.** Call it **only** when the user **explicitly** asks to add, save, store, or remember something **in their knowledge base** (or equivalent wording), **and** they have given (or you are clearly summarizing **their** material to persist—not generic advice). Do **not** use it for normal answers, tutorials, or because storing might be “helpful.” Do **not** suggest adding to the KB unless they asked. If intent is unclear, answer normally and ask whether they want it saved to the KB. The user edits and must click **Proceed** before insert; do **not** claim the chunk exists until they confirm.
 - \`proposeUpdateKnowledgeDocument\`: propose replacing a record's text. The user can edit the text in the UI and must click **Proceed** before the database updates. Do **not** claim the record changed until they confirm.
-- \`proposeDeleteKnowledgeDocument\`: propose removing a record. The user must confirm in the UI before deletion. Do **not** claim deletion until they confirm.`;
+- \`proposeDeleteKnowledgeDocument\`: propose removing a record. The user must confirm in the UI before deletion. Do **not** claim deletion until they confirm.
+
+**Confirmation outcomes:** After the user acts on a propose-* panel, the UI automatically sends you a follow-up user message starting with \`[TOOL_OUTCOME] \`. Read it and **briefly acknowledge** the result — e.g. "Done, the document has been added." or "Understood, nothing was changed." — then continue naturally. Never ignore a \`[TOOL_OUTCOME]\` message.`;
 
 const DEBUG_KB_TOOLS_PROMPT_PEER = `
 
@@ -93,7 +95,9 @@ DEBUG MODE — knowledge base maintenance tools:
 - After \`searchKnowledgeBase\`, debug payloads include each hit's **record \`id\`** (UUID). Use that \`id\` only — do not invent ids.
 - \`proposeAddKnowledgeDocument\`: **Rare.** Call **only** when they **explicitly** asked to add/save to the KB. **Peer mode:** If unclear, answer **without** asking to save to the KB or inviting follow-up. Do **not** call this unless they clearly requested a KB save. User clicks **Proceed** before insert; do **not** claim success until then.
 - \`proposeUpdateKnowledgeDocument\`: propose replacing a record's text; user must **Proceed** before update. Do **not** claim the record changed until they confirm.
-- \`proposeDeleteKnowledgeDocument\`: propose deleting a record; user must confirm before deletion.`;
+- \`proposeDeleteKnowledgeDocument\`: propose deleting a record; user must confirm before deletion.
+
+**Confirmation outcomes:** After the user acts on a propose-* panel, the UI automatically sends you a follow-up user message starting with \`[TOOL_OUTCOME] \`. Read it and **briefly acknowledge** the result in your own voice — e.g. "Done." or "Got it, nothing changed." — then continue naturally. Never ignore a \`[TOOL_OUTCOME]\` message.`;
 
 /** Clarifies that KB search is not tied to DEBUG (models sometimes assume otherwise). */
 const KNOWLEDGE_SEARCH_TOOL_AVAILABILITY = `
