@@ -1,7 +1,8 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, memo, useLayoutEffect } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { isReasoningUIPart, isToolUIPart, type UIMessage } from "ai";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -714,7 +715,7 @@ function ToolStatusRow({ part }: { part: UIMessage["parts"][number] }) {
     );
 }
 
-function AssistantBubble({
+const AssistantBubble = memo(function AssistantBubble({
     message,
     isActiveAssistant,
 }: {
@@ -739,7 +740,37 @@ function AssistantBubble({
             ))}
         </div>
     );
-}
+});
+
+const ChatMessageRow = memo(function ChatMessageRow({
+    msg,
+    isActiveAssistant,
+    motionInitial,
+}: {
+    msg: UIMessage;
+    isActiveAssistant: boolean;
+    motionInitial: boolean;
+}) {
+    return (
+        <motion.div
+            initial={motionInitial ? { opacity: 0, y: 10 } : false}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+            className={cn(
+                "rounded-3xl px-4 py-3 shadow-sm backdrop-blur-sm",
+                msg.role === "user"
+                    ? "ml-auto bg-blue-500 text-white max-w-xl w-fit"
+                    : "w-fit bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 max-w-2xl"
+            )}
+        >
+            {msg.role === "assistant" ? (
+                <AssistantBubble message={msg} isActiveAssistant={isActiveAssistant} />
+            ) : (
+                <span className="whitespace-pre-wrap break-words">{textFromMessage(msg)}</span>
+            )}
+        </motion.div>
+    );
+});
 
 type DebugChatContext = {
     aiName: string;
@@ -781,6 +812,9 @@ function DebugChatIdentityBanner({ ctx }: { ctx: DebugChatContext }) {
     );
 }
 
+/** Below this length, render all rows (entrance animations). Above, virtualize for DOM/memory. */
+const CHAT_VIRTUAL_THRESHOLD = 28;
+
 const welcomeMessages: UIMessage[] = [
     {
         id: "seed-u",
@@ -804,7 +838,9 @@ export default function ChatbotUI() {
     const [input, setInput] = useState("");
     const [chatError, setChatError] = useState<string | null>(null);
     const [debugIdentity, setDebugIdentity] = useState<DebugChatContext | null>(null);
+    const scrollParentRef = useRef<HTMLDivElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const stickToBottomRef = useRef(true);
     const persistConvIdRef = useRef(activeConv);
     persistConvIdRef.current = activeConv;
 
@@ -836,9 +872,42 @@ export default function ChatbotUI() {
         return null;
     }, [messages, status]);
 
-    useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messages, activeConv, status, activeAssistantId]);
+    const useVirtualList = messages.length >= CHAT_VIRTUAL_THRESHOLD;
+
+    const virtualizer = useVirtualizer({
+        count: messages.length,
+        getScrollElement: () => scrollParentRef.current,
+        estimateSize: () => 140,
+        overscan: 8,
+        gap: 28,
+        paddingStart: 24,
+        paddingEnd: 40,
+        getItemKey: (index) => messages[index]?.id ?? index,
+        enabled: useVirtualList,
+        useAnimationFrameWithResizeObserver: true,
+    });
+
+    const onScrollParent = useCallback(() => {
+        const el = scrollParentRef.current;
+        if (!el) return;
+        const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+        stickToBottomRef.current = dist < 120;
+    }, []);
+
+    useLayoutEffect(() => {
+        if (messages.length === 0) return;
+        if (!stickToBottomRef.current) return;
+        const id = requestAnimationFrame(() => {
+            if (useVirtualList) {
+                virtualizer.scrollToIndex(messages.length - 1, { align: "end", behavior: "auto" });
+            } else {
+                const behavior: ScrollBehavior =
+                    status === "streaming" || status === "submitted" ? "auto" : "smooth";
+                messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
+            }
+        });
+        return () => cancelAnimationFrame(id);
+    }, [messages, activeConv, useVirtualList, virtualizer, messages.length, status]);
 
     const loadDebugIdentity = useCallback(async () => {
         try {
@@ -884,6 +953,7 @@ export default function ChatbotUI() {
 
     const createNewConversation = useCallback(() => {
         if (chatInFlight) return;
+        stickToBottomRef.current = true;
         const id = `conv-${Date.now()}`;
         setConvIds((prev) => [id, ...prev]);
         setConvStore((prev) => ({ ...prev, [id]: [] }));
@@ -893,6 +963,7 @@ export default function ChatbotUI() {
     const switchConversation = useCallback(
         (id: string) => {
             if (chatInFlight) return;
+            stickToBottomRef.current = true;
             setActiveConv(id);
         },
         [chatInFlight]
@@ -903,6 +974,7 @@ export default function ChatbotUI() {
         if (!text || chatInFlight) return;
         setInput("");
         setChatError(null);
+        stickToBottomRef.current = true;
         persistConvIdRef.current = activeConv;
         await sendMessage({ text });
     };
@@ -982,35 +1054,51 @@ export default function ChatbotUI() {
                         {chatError}
                     </div>
                 ) : null}
-                <div className="flex-1 min-h-0 overflow-y-auto">
-                    <div className="p-6 space-y-7 pb-10 max-w-3xl mx-auto">
-                        {messages.map((msg) => (
-                            <motion.div
-                                key={msg.id}
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ duration: 0.3 }}
-                                className={cn(
-                                    "rounded-3xl px-4 py-3 shadow-sm backdrop-blur-sm",
-                                    msg.role === "user"
-                                        ? "ml-auto bg-blue-500 text-white max-w-xl w-fit"
-                                        : "w-fit bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 max-w-2xl"
-                                )}
-                            >
-                                {msg.role === "assistant" ? (
-                                    <AssistantBubble
-                                        message={msg}
-                                        isActiveAssistant={msg.id === activeAssistantId}
-                                    />
-                                ) : (
-                                    <span className="whitespace-pre-wrap break-words">
-                                        {textFromMessage(msg)}
-                                    </span>
-                                )}
-                            </motion.div>
-                        ))}
-                        <div ref={messagesEndRef} />
-                    </div>
+                <div
+                    ref={scrollParentRef}
+                    onScroll={onScrollParent}
+                    className="flex-1 min-h-0 overflow-y-auto"
+                >
+                    {useVirtualList ? (
+                        <div
+                            className="max-w-3xl mx-auto w-full relative"
+                            style={{ height: virtualizer.getTotalSize() }}
+                        >
+                            {virtualizer.getVirtualItems().map((virtualRow) => {
+                                const msg = messages[virtualRow.index];
+                                if (!msg) return null;
+                                return (
+                                    <div
+                                        key={virtualRow.key}
+                                        data-index={virtualRow.index}
+                                        ref={virtualizer.measureElement}
+                                        className="absolute top-0 left-0 w-full px-6"
+                                        style={{
+                                            transform: `translateY(${virtualRow.start}px)`,
+                                        }}
+                                    >
+                                        <ChatMessageRow
+                                            msg={msg}
+                                            isActiveAssistant={msg.id === activeAssistantId}
+                                            motionInitial={false}
+                                        />
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <div className="p-6 space-y-7 pb-10 max-w-3xl mx-auto">
+                            {messages.map((msg) => (
+                                <ChatMessageRow
+                                    key={msg.id}
+                                    msg={msg}
+                                    isActiveAssistant={msg.id === activeAssistantId}
+                                    motionInitial={true}
+                                />
+                            ))}
+                            <div ref={messagesEndRef} />
+                        </div>
+                    )}
                 </div>
 
                 <div className="sticky bottom-0 bg-gradient-to-t from-gray-100/95 to-transparent dark:from-gray-900/95 backdrop-blur-xl border-t border-gray-200 dark:border-gray-800 p-4">
