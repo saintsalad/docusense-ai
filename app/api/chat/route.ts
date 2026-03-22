@@ -9,7 +9,7 @@ import { z } from "zod";
 import { getChatModel } from "@/lib/chat-model";
 import { fetchKnowledgeBase } from "@/lib/knowledge-context";
 import { getKnowledgeRecordById } from "@/lib/knowledge-record";
-import { getActiveAgentConfig } from "@/lib/agents";
+import { getActiveAgentConfig, getAgentConfigById } from "@/lib/agents";
 import { isServerDebugEnabled, parseChatMaxOutputTokens } from "@/lib/env-server";
 
 /** Required for streaming UI message chunks; avoids buffering that breaks the client parser. */
@@ -111,7 +111,7 @@ export async function POST(req: Request) {
             });
         }
 
-        const { messages } = body as { messages: UIMessage[] };
+        const { messages, agentId } = body as { messages: UIMessage[]; agentId?: string | null };
         if (!Array.isArray(messages) || messages.length === 0) {
             return new Response(JSON.stringify({ error: "messages must be a non-empty array" }), {
                 status: 400,
@@ -120,7 +120,10 @@ export async function POST(req: Request) {
         }
 
         const debug = isServerDebugEnabled();
-        const agentConfig = getActiveAgentConfig();
+        const agentConfig =
+            typeof agentId === "string" && agentId
+                ? (getAgentConfigById(agentId) ?? getActiveAgentConfig())
+                : getActiveAgentConfig();
         const { assistantMode, tools: agentTools } = agentConfig;
         const systemPrompt = `${buildChatSystemPrompt(
             agentConfig.aiName,

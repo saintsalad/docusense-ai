@@ -164,3 +164,22 @@ export function getActiveAgentConfig(): ActiveAgentConfig {
         tools: { searchKnowledgeBase: true },
     };
 }
+
+/**
+ * Returns config for a specific agent by ID.
+ * Returns null if the agent does not exist, in which case the caller should
+ * fall back to getActiveAgentConfig().
+ */
+export function getAgentConfigById(id: string): ActiveAgentConfig | null {
+    const agent = getAgentById(id);
+    if (!agent) return null;
+    return {
+        aiName: agent.aiName.trim() || DEFAULT_AI_NAME,
+        personality: agent.personality.trim() || undefined,
+        assistantMode: agent.assistantMode,
+        ollamaChatModel: agent.ollamaChatModel,
+        chatTemperature: agent.chatTemperature,
+        knowledgeSearchNResults: agent.knowledgeSearchNResults,
+        tools: agent.tools,
+    };
+}

@@ -3,7 +3,7 @@
 import { useChat } from "@ai-sdk/react";
 import { useState, useEffect, useRef, useCallback, useMemo, memo, useLayoutEffect, createContext, useContext } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { isReasoningUIPart, isToolUIPart, type UIMessage } from "ai";
+import { isReasoningUIPart, isToolUIPart, type UIMessage, DefaultChatTransport } from "ai";
 import { cn } from "@/lib/utils";
 import {
     chatBubble,
@@ -949,98 +949,18 @@ function DebugChatIdentityBanner({ ctx }: { ctx: DebugChatContext }) {
 
 const INITIAL_CONV_ID = "conv-1";
 
-/* ─── Agent data types ───────────────────────────────────────────────────── */
+/* ─── Agent / conversation data types ───────────────────────────────────── */
 
 type ChatAgent = { id: string; name: string; aiName: string };
 
-/* ─── Inline agent switcher for the sidebar ─────────────────────────────── */
+/** Metadata about which agent is assigned to a given conversation. */
+type ConvAgent = { agentId: string | null; agentName: string; agentAiName: string };
 
-function AgentSwitcher({
-    agents,
-    activeAgentId,
-    onSwitch,
-    disabled,
-}: {
-    agents: ChatAgent[];
-    activeAgentId: string | null;
-    onSwitch: (id: string) => void;
-    disabled: boolean;
-}) {
-    const [open, setOpen] = useState(false);
-    const activeAgent = agents.find((a) => a.id === activeAgentId) ?? agents[0] ?? null;
-
-    if (agents.length === 0) return null;
-
-    return (
-        <div className={chatSidebar.agentStrip}>
-            <p className={chatSidebar.agentStripLabel}>Agent</p>
-            <button
-                type="button"
-                className={chatSidebar.agentActiveRow}
-                onClick={() => setOpen((v) => !v)}
-                disabled={disabled}
-            >
-                <span className={chatSidebar.agentActiveIcon} aria-hidden>
-                    <Bot className="size-3.5" />
-                </span>
-                <span className="min-w-0 flex-1 truncate">
-                    {activeAgent ? activeAgent.name : "No agent"}
-                </span>
-                <ChevronDown
-                    className={cn(
-                        chatSidebar.agentChevron,
-                        open && chatSidebar.agentChevronOpen
-                    )}
-                />
-            </button>
-
-            {open && (
-                <div className={chatSidebar.agentList}>
-                    {agents.map((agent) => {
-                        const isActive = agent.id === activeAgentId;
-                        return (
-                            <button
-                                key={agent.id}
-                                type="button"
-                                className={cn(
-                                    chatSidebar.agentItem,
-                                    isActive
-                                        ? chatSidebar.agentItemActive
-                                        : chatSidebar.agentItemInactive
-                                )}
-                                onClick={() => {
-                                    onSwitch(agent.id);
-                                    setOpen(false);
-                                }}
-                                disabled={disabled}
-                            >
-                                <span
-                                    className={
-                                        isActive
-                                            ? chatSidebar.agentItemIconActive
-                                            : chatSidebar.agentItemIcon
-                                    }
-                                    aria-hidden
-                                >
-                                    <Bot className="size-3.5" />
-                                </span>
-                                <div className="min-w-0 flex-1">
-                                    <p className="truncate leading-tight">{agent.name}</p>
-                                    <p className="truncate text-[11px] font-normal text-muted-foreground">
-                                        {agent.aiName}
-                                    </p>
-                                </div>
-                                {isActive && (
-                                    <CheckCircle className="ml-auto size-3.5 shrink-0 text-primary" />
-                                )}
-                            </button>
-                        );
-                    })}
-                </div>
-            )}
-        </div>
-    );
-}
+const DEFAULT_CONV_AGENT: ConvAgent = {
+    agentId: null,
+    agentName: "Default",
+    agentAiName: chatCopy.defaultAiName,
+};
 
 function EmptyChatState({ aiName }: { aiName: string }) {
     return (
@@ -1065,19 +985,33 @@ export default function ChatbotUI() {
     const [input, setInput] = useState("");
     const [chatError, setChatError] = useState<string | null>(null);
     const [debugIdentity, setDebugIdentity] = useState<DebugChatContext | null>(null);
-    const [aiDisplayName, setAiDisplayName] = useState<string>(chatCopy.defaultAiName);
     const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
     const [agents, setAgents] = useState<ChatAgent[]>([]);
-    const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+    const [convAgents, setConvAgents] = useState<Record<string, ConvAgent>>({
+        [INITIAL_CONV_ID]: { ...DEFAULT_CONV_AGENT },
+    });
+    const [defaultAiName, setDefaultAiName] = useState<string>(chatCopy.defaultAiName);
+    const [newChatOpen, setNewChatOpen] = useState(false);
+    const newChatPickerRef = useRef<HTMLDivElement>(null);
+    const currentConvAgent = convAgents[activeConv] ?? DEFAULT_CONV_AGENT;
+    const aiDisplayName = currentConvAgent.agentAiName;
     const scrollParentRef = useRef<HTMLDivElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const stickToBottomRef = useRef(true);
     const persistConvIdRef = useRef(activeConv);
     persistConvIdRef.current = activeConv;
+    // Ref so the stable transport closure always reads the current conversation's agentId.
+    const agentIdRef = useRef<string | null>(currentConvAgent.agentId);
+    agentIdRef.current = currentConvAgent.agentId;
+    const chatTransport = useMemo(
+        () => new DefaultChatTransport({ body: () => ({ agentId: agentIdRef.current }) }),
+        [] // stable for the component's lifetime
+    );
 
     const { messages: rawMessages, sendMessage, status, clearError } = useChat({
         id: activeConv,
         messages: convStore[activeConv] ?? [],
+        transport: chatTransport,
         onFinish: ({ messages: next, isError }) => {
             const id = persistConvIdRef.current;
             setConvStore((prev) => ({ ...prev, [id]: next }));
@@ -1156,7 +1090,6 @@ export default function ChatbotUI() {
 
     const loadConfig = useCallback(async () => {
         try {
-            // Load agents list and active agent in parallel
             const [agentsRes, activeRes] = await Promise.all([
                 fetch("/api/agents", { cache: "no-store" }),
                 fetch("/api/agents/active", { cache: "no-store" }),
@@ -1164,7 +1097,6 @@ export default function ChatbotUI() {
             const agentsData = (await agentsRes.json()) as { ok?: boolean; agents?: ChatAgent[] };
             const activeData = (await activeRes.json()) as {
                 ok?: boolean;
-                activeAgentId?: string | null;
                 agent?: { aiName?: string };
             };
 
@@ -1172,23 +1104,33 @@ export default function ChatbotUI() {
                 setAgents(agentsData.agents);
             }
 
-            const aid = activeData.ok ? (activeData.activeAgentId ?? null) : null;
-            setActiveAgentId(aid);
-
-            // AI display name: prefer active agent's aiName
-            const agentAiName = activeData.ok && typeof activeData.agent?.aiName === "string"
-                ? activeData.agent.aiName.trim()
-                : "";
-            if (agentAiName) {
-                setAiDisplayName(agentAiName);
-                return;
+            // Resolve the AI display name for null-agent (default) conversations
+            let resolved =
+                activeData.ok && typeof activeData.agent?.aiName === "string"
+                    ? activeData.agent.aiName.trim()
+                    : "";
+            if (!resolved) {
+                try {
+                    const cfgRes = await fetch("/api/chatbot-config", { cache: "no-store" });
+                    const cfgData = (await cfgRes.json()) as { ok?: boolean; config?: { aiName?: string } };
+                    const n =
+                        cfgData.ok && typeof cfgData.config?.aiName === "string"
+                            ? cfgData.config.aiName.trim()
+                            : "";
+                    if (n) resolved = n;
+                } catch { /* ignore */ }
             }
 
-            // Fallback: global chatbot-config
-            const cfgRes = await fetch("/api/chatbot-config", { cache: "no-store" });
-            const cfgData = (await cfgRes.json()) as { ok?: boolean; config?: { aiName?: string } };
-            if (cfgData.ok && typeof cfgData.config?.aiName === "string" && cfgData.config.aiName.trim()) {
-                setAiDisplayName(cfgData.config.aiName.trim());
+            if (resolved) {
+                const name = resolved;
+                setDefaultAiName(name);
+                setConvAgents((prev) => {
+                    const next: Record<string, ConvAgent> = {};
+                    for (const [id, ca] of Object.entries(prev)) {
+                        next[id] = ca.agentId === null ? { ...ca, agentAiName: name } : ca;
+                    }
+                    return next;
+                });
             }
         } catch { /* silently keep default */ }
     }, []);
@@ -1236,39 +1178,38 @@ export default function ChatbotUI() {
         };
     }, [loadDebugIdentity]);
 
-    const createNewConversation = useCallback(() => {
+    const createNewConversation = useCallback((convAgent: ConvAgent) => {
         if (chatInFlight) return;
         stickToBottomRef.current = true;
         const id = `conv-${Date.now()}`;
         setConvIds((prev) => [id, ...prev]);
         setConvStore((prev) => ({ ...prev, [id]: [] }));
+        setConvAgents((prev) => ({ ...prev, [id]: convAgent }));
         setActiveConv(id);
+        setNewChatOpen(false);
+        setMobileSidebarOpen(false);
     }, [chatInFlight]);
 
     const switchConversation = useCallback(
         (id: string) => {
             if (chatInFlight) return;
             stickToBottomRef.current = true;
+            setNewChatOpen(false);
             setActiveConv(id);
         },
         [chatInFlight]
     );
 
-    const handleSwitchAgent = useCallback(async (id: string) => {
-        try {
-            const res = await fetch("/api/agents/active", {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ activeAgentId: id }),
-            });
-            const data = (await res.json()) as { ok?: boolean };
-            if (data.ok) {
-                setActiveAgentId(id);
-                const agent = agents.find((a) => a.id === id);
-                if (agent?.aiName?.trim()) setAiDisplayName(agent.aiName.trim());
+    useEffect(() => {
+        if (!newChatOpen) return;
+        const handler = (e: MouseEvent) => {
+            if (newChatPickerRef.current && !newChatPickerRef.current.contains(e.target as Node)) {
+                setNewChatOpen(false);
             }
-        } catch { /* ignore */ }
-    }, [agents]);
+        };
+        document.addEventListener("mousedown", handler);
+        return () => document.removeEventListener("mousedown", handler);
+    }, [newChatOpen]);
 
     const handleSend = async () => {
         const text = input.trim();
@@ -1317,22 +1258,64 @@ export default function ChatbotUI() {
                     >
                         <X className="size-4" />
                     </button>
-                    <button
-                        type="button"
-                        onClick={createNewConversation}
-                        disabled={chatInFlight}
-                        className={chatSidebar.newChatBtn}
-                        aria-label={chatCopy.newChatAria}
-                    >
-                        <Plus className="size-4" />
-                    </button>
+                    <div ref={newChatPickerRef} className="relative">
+                        <button
+                            type="button"
+                            onClick={() =>
+                                agents.length > 0
+                                    ? setNewChatOpen((v) => !v)
+                                    : createNewConversation({ agentId: null, agentName: "Default", agentAiName: defaultAiName })
+                            }
+                            disabled={chatInFlight}
+                            className={chatSidebar.newChatBtn}
+                            aria-label={chatCopy.newChatAria}
+                        >
+                            <Plus className="size-4" />
+                        </button>
+                        {newChatOpen && (
+                            <div className={chatSidebar.newChatPickerWrap}>
+                                <p className={chatSidebar.newChatPickerLabel}>Start chat with</p>
+                                <button
+                                    type="button"
+                                    className={chatSidebar.newChatPickerItem}
+                                    onClick={() =>
+                                        createNewConversation({ agentId: null, agentName: "Default", agentAiName: defaultAiName })
+                                    }
+                                >
+                                    <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-muted/50 text-muted-foreground">
+                                        <MessageSquare className="size-3.5" />
+                                    </span>
+                                    <div className="min-w-0">
+                                        <p className="leading-tight">Default</p>
+                                        <p className="truncate text-[11px] text-muted-foreground">{defaultAiName}</p>
+                                    </div>
+                                </button>
+                                {agents.map((agent) => (
+                                    <button
+                                        key={agent.id}
+                                        type="button"
+                                        className={chatSidebar.newChatPickerItem}
+                                        onClick={() =>
+                                            createNewConversation({
+                                                agentId: agent.id,
+                                                agentName: agent.name,
+                                                agentAiName: agent.aiName.trim() || chatCopy.defaultAiName,
+                                            })
+                                        }
+                                    >
+                                        <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-primary">
+                                            <Bot className="size-3.5" />
+                                        </span>
+                                        <div className="min-w-0">
+                                            <p className="leading-tight">{agent.name}</p>
+                                            <p className="truncate text-[11px] text-muted-foreground">{agent.aiName}</p>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 </div>
-                <AgentSwitcher
-                    agents={agents}
-                    activeAgentId={activeAgentId}
-                    onSwitch={(id) => void handleSwitchAgent(id)}
-                    disabled={chatInFlight}
-                />
 
                 <ScrollArea className={chatSidebar.scrollArea}>
                     <div className={chatSidebar.list}>
@@ -1340,11 +1323,12 @@ export default function ChatbotUI() {
                             const list = convId === activeConv ? messages : (convStore[convId] ?? []);
                             const count = list.length;
                             const isActive = activeConv === convId;
+                            const ca = convAgents[convId] ?? DEFAULT_CONV_AGENT;
                             return (
                                 <button
                                     key={convId}
                                     type="button"
-                                    onClick={() => { switchConversation(convId); setMobileSidebarOpen(false); }}
+                                    onClick={() => switchConversation(convId)}
                                     disabled={chatInFlight}
                                     className={cn(
                                         chatSidebar.convBtn,
@@ -1361,21 +1345,32 @@ export default function ChatbotUI() {
                                         )}
                                         aria-hidden
                                     >
-                                        <MessageSquare className="size-[15px]" strokeWidth={1.75} />
+                                        {ca.agentId !== null ? (
+                                            <Bot className="size-[15px]" strokeWidth={1.75} />
+                                        ) : (
+                                            <MessageSquare className="size-[15px]" strokeWidth={1.75} />
+                                        )}
                                     </div>
                                     <div className={chatSidebar.convBody}>
                                         <p className={chatSidebar.convTitle}>
                                             {sidebarPreview(list)}
                                         </p>
                                         <p className={chatSidebar.convMeta}>
-                                            {count > 0 ? (
-                                                <>
-                                                    <span className={chatSidebar.convMetaDot} aria-hidden />
-                                                    {count} {count === 1 ? "message" : "messages"}
-                                                </>
-                                            ) : (
-                                                "No messages yet"
+                                            {ca.agentId !== null && (
+                                                <span className={chatSidebar.convAgentLabel}>
+                                                    <Bot className="size-3 shrink-0" />
+                                                    {ca.agentName}
+                                                </span>
                                             )}
+                                            {count > 0 && (
+                                                <>
+                                                    {ca.agentId !== null && (
+                                                        <span className={chatSidebar.convMetaDot} aria-hidden />
+                                                    )}
+                                                    {count} {count === 1 ? "msg" : "msgs"}
+                                                </>
+                                            )}
+                                            {count === 0 && ca.agentId === null && "New chat"}
                                         </p>
                                     </div>
                                 </button>
@@ -1402,7 +1397,11 @@ export default function ChatbotUI() {
                     </span>
                     <button
                         type="button"
-                        onClick={createNewConversation}
+                        onClick={() => {
+                            setMobileSidebarOpen(true);
+                            if (agents.length > 0) setNewChatOpen(true);
+                            else createNewConversation({ agentId: null, agentName: "Default", agentAiName: defaultAiName });
+                        }}
                         disabled={chatInFlight}
                         className={chatShell.mobileNewChatBtn}
                         aria-label={chatCopy.newChatAria}
