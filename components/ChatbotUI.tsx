@@ -5,9 +5,23 @@ import { useState, useEffect, useRef, useCallback, useMemo, memo, useLayoutEffec
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { isReasoningUIPart, isToolUIPart, type UIMessage } from "ai";
 import { cn } from "@/lib/utils";
+import {
+    chatBubble,
+    chatComposer,
+    chatCopy,
+    chatLayout,
+    chatMessage,
+    chatShell,
+    chatSidebar,
+    chatSystem,
+    chatTyping,
+} from "@/lib/chat-design";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { motion } from "framer-motion";
 import {
     Send,
@@ -22,6 +36,10 @@ import {
     AlertTriangle,
     FilePlus,
     Bug,
+    ChevronDown,
+    Sparkles,
+    Menu,
+    X,
 } from "lucide-react";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 
@@ -42,9 +60,9 @@ function toolUiMeta(rawName: string): { rawName: string; friendly: string } {
 /** Same message as MarkdownRenderer empty state — shown early while streaming / tools run. */
 function AiTypingIndicator() {
     return (
-        <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 min-h-[22px]">
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-            <span className="text-sm">AI is typing...</span>
+        <div className={chatTyping.row}>
+            <Loader2 className={chatTyping.icon} />
+            <span className={chatTyping.text}>AI is typing…</span>
         </div>
     );
 }
@@ -89,10 +107,11 @@ function isToolPartAwaitingOutput(part: UIMessage["parts"][number]): boolean {
 
 function sidebarPreview(messages: UIMessage[]): string {
     const first = messages.find((m) => m.role === "user");
-    if (!first) return "New Conversation";
+    if (!first) return chatCopy.newConversationPreview;
     const t = textFromMessage(first);
-    if (!t) return "New Conversation";
-    return t.length > 30 ? `${t.slice(0, 30)}…` : t;
+    if (!t) return chatCopy.newConversationPreview;
+    const max = chatLayout.sidebarPreviewMaxChars;
+    return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
 type VectorDebugPayload = {
@@ -398,7 +417,7 @@ function DebugKnowledgeUpdatePanel({ payload }: { payload: PendingKbUpdate }) {
             </p>
             <div className="mb-2 space-y-1">
                 <p className="text-[10px] font-medium text-muted-foreground">Current (read-only)</p>
-                <pre className="max-h-28 overflow-y-auto rounded border border-amber-200/80 bg-white/90 p-2 text-[10px] whitespace-pre-wrap break-words dark:border-amber-900/40 dark:bg-gray-950/80">
+                <pre className="max-h-28 overflow-y-auto rounded border border-amber-200/80 bg-white/90 p-2 text-[10px] whitespace-pre-wrap wrap-break-word dark:border-amber-900/40 dark:bg-gray-950/80">
                     {payload.currentDocument}
                 </pre>
             </div>
@@ -502,7 +521,7 @@ function DebugKnowledgeDeletePanel({ payload }: { payload: PendingKbDelete }) {
                 </p>
             </div>
             <p className="mb-1 text-[10px] font-medium text-muted-foreground">Record preview</p>
-            <pre className="mb-2 max-h-32 overflow-y-auto rounded border border-red-200/60 bg-white/90 p-2 text-[10px] whitespace-pre-wrap break-words dark:border-red-900/35 dark:bg-gray-950/80">
+            <pre className="mb-2 max-h-32 overflow-y-auto rounded border border-red-200/60 bg-white/90 p-2 text-[10px] whitespace-pre-wrap wrap-break-word dark:border-red-900/35 dark:bg-gray-950/80">
                 {payload.previewDocument}
             </pre>
             <div className="mb-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
@@ -543,7 +562,7 @@ function DebugKnowledgeDeletePanel({ payload }: { payload: PendingKbDelete }) {
 }
 
 function KnowledgeBaseRetrievedSummary({ found, context }: KbSearchPublicOutput) {
-    const previewMax = 6_000;
+    const previewMax = chatLayout.kbContextPreviewMaxChars;
     const text = context.length > previewMax ? `${context.slice(0, previewMax)}…` : context;
     return (
         <details className="mt-2 rounded-md border border-sky-200/90 bg-sky-50/60 text-left dark:border-sky-900/50 dark:bg-sky-950/25">
@@ -551,7 +570,7 @@ function KnowledgeBaseRetrievedSummary({ found, context }: KbSearchPublicOutput)
                 {found ? "Retrieved from knowledge base" : "Knowledge base search (no matches)"}
             </summary>
             <div className="max-h-72 overflow-y-auto border-t border-sky-200/70 p-2 dark:border-sky-900/45">
-                <pre className="whitespace-pre-wrap break-words text-[11px] text-gray-800 dark:text-gray-200">
+                <pre className="whitespace-pre-wrap wrap-break-word text-[11px] text-gray-800 dark:text-gray-200">
                     {text}
                 </pre>
             </div>
@@ -596,7 +615,7 @@ function KnowledgeBaseDebugAccordion({ debug }: { debug: VectorDebugPayload }) {
                             </span>
                             <span>date: {h.date}</span>
                         </div>
-                        <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-gray-800 dark:text-gray-200">
+                        <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap wrap-break-word text-gray-800 dark:text-gray-200">
                             {h.document}
                         </pre>
                     </div>
@@ -742,35 +761,68 @@ const AssistantBubble = memo(function AssistantBubble({
     );
 });
 
-const ChatMessageRow = memo(function ChatMessageRow({
-    msg,
-    isActiveAssistant,
-    motionInitial,
-}: {
-    msg: UIMessage;
-    isActiveAssistant: boolean;
-    motionInitial: boolean;
-}) {
-    return (
-        <motion.div
-            initial={motionInitial ? { opacity: 0, y: 10 } : false}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-            className={cn(
-                "rounded-3xl px-4 py-3 shadow-sm backdrop-blur-sm",
-                msg.role === "user"
-                    ? "ml-auto bg-blue-500 text-white max-w-xl w-fit"
-                    : "w-fit bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 max-w-2xl"
-            )}
-        >
-            {msg.role === "assistant" ? (
-                <AssistantBubble message={msg} isActiveAssistant={isActiveAssistant} />
-            ) : (
-                <span className="whitespace-pre-wrap break-words">{textFromMessage(msg)}</span>
-            )}
-        </motion.div>
-    );
-});
+const ChatMessageRow = memo(
+    function ChatMessageRow({
+        msg,
+        isActiveAssistant,
+        motionInitial,
+        aiName,
+    }: {
+        msg: UIMessage;
+        isActiveAssistant: boolean;
+        motionInitial: boolean;
+        aiName: string;
+    }) {
+        const isUser = msg.role === "user";
+
+        const metaRow = (
+            <div className={isUser ? chatMessage.metaUser : chatMessage.metaAssistant}>
+                <span className={chatMessage.metaName}>
+                    {isUser ? chatCopy.roleUser : aiName}
+                </span>
+            </div>
+        );
+
+        const bubble = (
+            <motion.div
+                initial={motionInitial ? { opacity: 0, y: 6 } : false}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.18 }}
+                className={cn(chatBubble.base, isUser ? chatBubble.user : chatBubble.assistant)}
+            >
+                {msg.role === "assistant" ? (
+                    <AssistantBubble message={msg} isActiveAssistant={isActiveAssistant} />
+                ) : (
+                    <span className={chatBubble.userText}>{textFromMessage(msg)}</span>
+                )}
+            </motion.div>
+        );
+
+        const avatar = isUser ? null : (
+            <div
+                className={cn(chatMessage.avatarBase, chatMessage.avatarAssistant)}
+                aria-hidden
+            >
+                <Sparkles className="size-[15px]" strokeWidth={2} />
+            </div>
+        );
+
+        return (
+            <div className={isUser ? chatMessage.outerUser : chatMessage.outerAssistant}>
+                {metaRow}
+                <div className={isUser ? chatMessage.bubbleRowUser : chatMessage.bubbleRowAssistant}>
+                    {avatar}
+                    {bubble}
+                </div>
+            </div>
+        );
+    },
+    (prev, next) =>
+        prev.msg === next.msg &&
+        prev.isActiveAssistant === next.isActiveAssistant &&
+        prev.motionInitial === next.motionInitial &&
+        prev.aiName === next.aiName
+);
 
 type DebugChatContext = {
     aiName: string;
@@ -781,63 +833,78 @@ type DebugChatContext = {
 function DebugChatIdentityBanner({ ctx }: { ctx: DebugChatContext }) {
     const hasPersona = ctx.aiPersonality.trim().length > 0;
     return (
-        <div className="shrink-0 mx-4 mt-4 max-w-3xl md:mx-auto w-[calc(100%-2rem)] rounded-lg border border-amber-200/90 bg-amber-50/90 px-4 py-3 text-left text-xs text-amber-950 dark:border-amber-900/55 dark:bg-amber-950/30 dark:text-amber-100">
-            <div className="mb-2 flex items-center gap-2 font-semibold">
-                <Bug className="h-4 w-4 shrink-0" />
-                DEBUG · Assistant identity (system prompt)
+        <div className={chatSystem.debugWrap}>
+            <Collapsible defaultOpen={false} className="group/collapse">
+                <CollapsibleTrigger className={chatSystem.debugTrigger}>
+                    <Bug className="size-3.5 shrink-0 opacity-70" />
+                    <span className="truncate">Debug · model identity</span>
+                    <Badge variant="outline" className="ml-1 shrink-0 text-[10px] font-normal">
+                        server
+                    </Badge>
+                    <ChevronDown className="ml-auto size-4 shrink-0 opacity-60 transition-transform duration-200 group-data-[state=open]/collapse:rotate-180" />
+                </CollapsibleTrigger>
+                <CollapsibleContent className={chatSystem.debugContent}>
+                    <Card className={chatSystem.debugCard}>
+                        <CardHeader className={chatSystem.debugCardHeader}>
+                            <CardTitle className={chatSystem.debugCardTitle}>Assistant identity</CardTitle>
+                            <CardDescription className="text-[11px]">
+                                From debug-context when DEBUG is enabled.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-2 border-t border-border px-3 py-2.5 text-xs text-card-foreground">
+                            <div>
+                                <span className={chatSystem.debugLabel}>Name · </span>
+                                <span className={chatSystem.debugMono}>{ctx.aiName}</span>
+                            </div>
+                            <div>
+                                <span className={chatSystem.debugLabel}>Assistant mode · </span>
+                                <span className={chatSystem.debugMono}>
+                                    {ctx.assistantMode ? "on" : "off"}
+                                </span>
+                            </div>
+                            <div>
+                                <span className={chatSystem.debugLabel}>Personality</span>
+                                {hasPersona ? (
+                                    <pre className={chatSystem.debugPre}>{ctx.aiPersonality}</pre>
+                                ) : (
+                                    <p className="mt-1 text-muted-foreground italic">Not set</p>
+                                )}
+                            </div>
+                        </CardContent>
+                    </Card>
+                </CollapsibleContent>
+            </Collapsible>
+        </div>
+    );
+}
+
+const INITIAL_CONV_ID = "conv-1";
+
+function EmptyChatState({ aiName }: { aiName: string }) {
+    return (
+        <div className={chatSystem.emptyWrap}>
+            <div className={chatSystem.emptyIconWrap}>
+                <Sparkles className="size-7" strokeWidth={1.5} />
             </div>
-            <div className="space-y-2">
-                <div>
-                    <span className="font-medium text-amber-900/90 dark:text-amber-200/90">Name: </span>
-                    <span className="font-mono text-[11px]">{ctx.aiName}</span>
-                </div>
-                <div>
-                    <span className="font-medium text-amber-900/90 dark:text-amber-200/90">Assistant mode: </span>
-                    <span className="font-mono text-[11px]">{ctx.assistantMode ? "on" : "off (peer / no solicit)"}</span>
-                </div>
-                <div>
-                    <span className="font-medium text-amber-900/90 dark:text-amber-200/90">Personality: </span>
-                    {hasPersona ? (
-                        <pre className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded border border-amber-200/70 bg-white/80 p-2 font-mono text-[11px] text-amber-950 dark:border-amber-900/40 dark:bg-gray-950/80 dark:text-amber-50">
-                            {ctx.aiPersonality}
-                        </pre>
-                    ) : (
-                        <span className="text-amber-800/80 italic dark:text-amber-200/70">
-                            (none — not set in chatbot-config.json)
-                        </span>
-                    )}
-                </div>
+            <div>
+                <p className={chatSystem.emptyTitle}>{aiName}</p>
+                <p className={chatSystem.emptySubtitle}>{chatCopy.emptySubtitle}</p>
             </div>
         </div>
     );
 }
 
-/** Below this length, render all rows (entrance animations). Above, virtualize for DOM/memory. */
-const CHAT_VIRTUAL_THRESHOLD = 28;
-
-const welcomeMessages: UIMessage[] = [
-    {
-        id: "seed-u",
-        role: "user",
-        parts: [{ type: "text", text: "Hello AI 👋" }],
-    },
-    {
-        id: "seed-a",
-        role: "assistant",
-        parts: [{ type: "text", text: "Hey there! How can I help you today?" }],
-    },
-];
-
 export default function ChatbotUI() {
-    const [convIds, setConvIds] = useState<string[]>(["conv-1", "conv-2"]);
+    const [convIds, setConvIds] = useState<string[]>([INITIAL_CONV_ID]);
     const [convStore, setConvStore] = useState<Record<string, UIMessage[]>>({
-        "conv-1": welcomeMessages,
-        "conv-2": [],
+        [INITIAL_CONV_ID]: [],
     });
-    const [activeConv, setActiveConv] = useState("conv-1");
+    const [activeConv, setActiveConv] = useState(INITIAL_CONV_ID);
     const [input, setInput] = useState("");
     const [chatError, setChatError] = useState<string | null>(null);
     const [debugIdentity, setDebugIdentity] = useState<DebugChatContext | null>(null);
+    const [aiDisplayName, setAiDisplayName] = useState<string>(chatCopy.defaultAiName);
+    const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
     const scrollParentRef = useRef<HTMLDivElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const stickToBottomRef = useRef(true);
@@ -872,16 +939,16 @@ export default function ChatbotUI() {
         return null;
     }, [messages, status]);
 
-    const useVirtualList = messages.length >= CHAT_VIRTUAL_THRESHOLD;
+    const useVirtualList = messages.length >= chatLayout.virtualThreshold;
 
     const virtualizer = useVirtualizer({
         count: messages.length,
         getScrollElement: () => scrollParentRef.current,
-        estimateSize: () => 140,
-        overscan: 8,
-        gap: 28,
-        paddingStart: 24,
-        paddingEnd: 40,
+        estimateSize: () => chatLayout.virtualEstimateRowPx,
+        overscan: chatLayout.virtualOverscan,
+        gap: chatLayout.virtualGapPx,
+        paddingStart: chatLayout.virtualPaddingStartPx,
+        paddingEnd: chatLayout.virtualPaddingEndPx,
         getItemKey: (index) => messages[index]?.id ?? index,
         enabled: useVirtualList,
         useAnimationFrameWithResizeObserver: true,
@@ -891,7 +958,7 @@ export default function ChatbotUI() {
         const el = scrollParentRef.current;
         if (!el) return;
         const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-        stickToBottomRef.current = dist < 120;
+        stickToBottomRef.current = dist < chatLayout.stickToBottomPx;
     }, []);
 
     useLayoutEffect(() => {
@@ -908,6 +975,19 @@ export default function ChatbotUI() {
         });
         return () => cancelAnimationFrame(id);
     }, [messages, activeConv, useVirtualList, virtualizer, messages.length, status]);
+
+    const loadConfig = useCallback(async () => {
+        try {
+            const res = await fetch("/api/chatbot-config", { cache: "no-store" });
+            const data = (await res.json()) as {
+                ok?: boolean;
+                config?: { aiName?: string };
+            };
+            if (data.ok && typeof data.config?.aiName === "string" && data.config.aiName.trim()) {
+                setAiDisplayName(data.config.aiName.trim());
+            }
+        } catch { /* silently keep default */ }
+    }, []);
 
     const loadDebugIdentity = useCallback(async () => {
         try {
@@ -933,8 +1013,9 @@ export default function ChatbotUI() {
     }, []);
 
     useEffect(() => {
+        void loadConfig();
         void loadDebugIdentity();
-    }, [loadDebugIdentity]);
+    }, [loadConfig, loadDebugIdentity]);
 
     useEffect(() => {
         const onFocus = () => {
@@ -980,88 +1061,141 @@ export default function ChatbotUI() {
     };
 
     return (
-        <div className="flex h-screen bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-900 dark:to-gray-950 overflow-hidden">
-            {/* Sidebar */}
-            <div className="w-72 border-r border-gray-200 dark:border-gray-800 backdrop-blur-lg p-4 flex flex-col bg-white/50 dark:bg-gray-900/50">
-                <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-200 dark:border-gray-700">
-                    <h2 className="text-xl font-semibold flex items-center gap-2 text-gray-800 dark:text-gray-100">
-                        <MessageSquare className="h-5 w-5 text-blue-500" />
-                        Conversations
-                    </h2>
-                    <Button
-                        size="sm"
+        <div className={chatShell.root}>
+            {/* ── Mobile sidebar backdrop ── */}
+            {mobileSidebarOpen && (
+                <div
+                    className={chatSidebar.backdrop}
+                    onClick={() => setMobileSidebarOpen(false)}
+                    aria-hidden
+                />
+            )}
+
+            {/* ── Sidebar ── */}
+            <aside
+                className={cn(
+                    chatSidebar.aside,
+                    mobileSidebarOpen ? chatSidebar.asideOpen : chatSidebar.asideClosed
+                )}
+            >
+                <div className={chatSidebar.header}>
+                    <div className={chatSidebar.headerLeft}>
+                        <MessageSquare className={chatSidebar.titleIcon} aria-hidden />
+                        <h2 className={chatSidebar.title}>{chatCopy.sidebarHeading}</h2>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setMobileSidebarOpen(false)}
+                        className={chatSidebar.closeBtn}
+                        aria-label="Close sidebar"
+                    >
+                        <X className="size-4" />
+                    </button>
+                    <button
+                        type="button"
                         onClick={createNewConversation}
                         disabled={chatInFlight}
-                        className="rounded-full h-8 w-8 p-0 bg-blue-500 hover:bg-blue-600 shadow-lg hover:shadow-xl transition-all duration-200"
+                        className={chatSidebar.newChatBtn}
+                        aria-label={chatCopy.newChatAria}
                     >
-                        <Plus className="h-4 w-4" />
-                    </Button>
+                        <Plus className="size-4" />
+                    </button>
                 </div>
-                <ScrollArea className="flex-1 min-h-0 -mx-2">
-                    <div className="space-y-2 px-2">
+                <ScrollArea className={chatSidebar.scrollArea}>
+                    <div className={chatSidebar.list}>
                         {convIds.map((convId) => {
                             const list = convId === activeConv ? messages : (convStore[convId] ?? []);
                             const count = list.length;
+                            const isActive = activeConv === convId;
                             return (
                                 <button
                                     key={convId}
                                     type="button"
-                                    onClick={() => switchConversation(convId)}
+                                    onClick={() => { switchConversation(convId); setMobileSidebarOpen(false); }}
                                     disabled={chatInFlight}
                                     className={cn(
-                                        "w-full rounded-lg px-4 py-3 text-left transition-colors duration-200",
-                                        chatInFlight && convId !== activeConv && "opacity-50 cursor-not-allowed",
-                                        activeConv === convId
-                                            ? "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800"
-                                            : "bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700"
+                                        chatSidebar.convBtn,
+                                        isActive ? chatSidebar.convBtnActive : chatSidebar.convBtnInactive,
+                                        chatInFlight && !isActive && "pointer-events-none opacity-40"
                                     )}
                                 >
-                                    <div className="flex flex-col items-start w-full">
-                                        <div className="flex items-center justify-between w-full mb-2">
-                                            <span className="font-medium text-sm truncate flex-1 text-gray-800 dark:text-gray-100">
-                                                {sidebarPreview(list)}
-                                            </span>
-                                            <span className="text-xs text-gray-500 ml-2 flex-shrink-0">
-                                                {count}
-                                            </span>
-                                        </div>
-                                        <div className="flex items-center justify-between w-full">
-                                            <span className="text-xs text-gray-500">
-                                                {count > 0 ? "Active" : "Empty"}
-                                            </span>
-                                            <div
-                                                className={cn(
-                                                    "w-2 h-2 rounded-full",
-                                                    activeConv === convId
-                                                        ? "bg-blue-500"
-                                                        : "bg-gray-400 dark:bg-gray-500"
-                                                )}
-                                            />
-                                        </div>
+                                    <div
+                                        className={cn(
+                                            chatSidebar.convIconWrap,
+                                            isActive
+                                                ? chatSidebar.convIconWrapActive
+                                                : chatSidebar.convIconWrapInactive
+                                        )}
+                                        aria-hidden
+                                    >
+                                        <MessageSquare className="size-[15px]" strokeWidth={1.75} />
+                                    </div>
+                                    <div className={chatSidebar.convBody}>
+                                        <p className={chatSidebar.convTitle}>
+                                            {sidebarPreview(list)}
+                                        </p>
+                                        <p className={chatSidebar.convMeta}>
+                                            {count > 0 ? (
+                                                <>
+                                                    <span className={chatSidebar.convMetaDot} aria-hidden />
+                                                    {count} {count === 1 ? "message" : "messages"}
+                                                </>
+                                            ) : (
+                                                "No messages yet"
+                                            )}
+                                        </p>
                                     </div>
                                 </button>
                             );
                         })}
                     </div>
                 </ScrollArea>
-            </div>
+            </aside>
 
-            {/* Chat area */}
-            <div className="flex-1 flex flex-col min-h-0">
+            {/* ── Chat area ── */}
+            <div className={chatShell.chatRegion}>
+                {/* Mobile top bar */}
+                <div className={chatShell.mobileHeader}>
+                    <button
+                        type="button"
+                        onClick={() => setMobileSidebarOpen(true)}
+                        className={chatShell.mobileMenuBtn}
+                        aria-label="Open sidebar"
+                    >
+                        <Menu className="size-5" />
+                    </button>
+                    <span className={chatShell.mobileTitleText}>
+                        {sidebarPreview(messages)}
+                    </span>
+                    <button
+                        type="button"
+                        onClick={createNewConversation}
+                        disabled={chatInFlight}
+                        className={chatShell.mobileNewChatBtn}
+                        aria-label={chatCopy.newChatAria}
+                    >
+                        <Plus className="size-5" />
+                    </button>
+                </div>
+
                 {debugIdentity ? <DebugChatIdentityBanner ctx={debugIdentity} /> : null}
                 {chatError ? (
-                    <div className="shrink-0 mx-4 mt-4 max-w-3xl md:mx-auto w-[calc(100%-2rem)] rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+                    <div className={chatSystem.errorCard} role="alert">
                         {chatError}
                     </div>
                 ) : null}
                 <div
                     ref={scrollParentRef}
                     onScroll={onScrollParent}
-                    className="flex-1 min-h-0 overflow-y-auto"
+                    className={chatShell.messagesScroll}
                 >
-                    {useVirtualList ? (
+                    {messages.length === 0 ? (
+                        <div className={chatShell.messagesInner}>
+                            <EmptyChatState aiName={aiDisplayName} />
+                        </div>
+                    ) : useVirtualList ? (
                         <div
-                            className="max-w-3xl mx-auto w-full relative"
+                            className="relative mx-auto w-full max-w-2xl px-5 pt-6"
                             style={{ height: virtualizer.getTotalSize() }}
                         >
                             {virtualizer.getVirtualItems().map((virtualRow) => {
@@ -1072,28 +1206,28 @@ export default function ChatbotUI() {
                                         key={virtualRow.key}
                                         data-index={virtualRow.index}
                                         ref={virtualizer.measureElement}
-                                        className="absolute top-0 left-0 w-full px-6"
-                                        style={{
-                                            transform: `translateY(${virtualRow.start}px)`,
-                                        }}
+                                        className="absolute left-0 top-0 w-full"
+                                        style={{ transform: `translateY(${virtualRow.start}px)` }}
                                     >
                                         <ChatMessageRow
                                             msg={msg}
                                             isActiveAssistant={msg.id === activeAssistantId}
                                             motionInitial={false}
+                                            aiName={aiDisplayName}
                                         />
                                     </div>
                                 );
                             })}
                         </div>
                     ) : (
-                        <div className="p-6 space-y-7 pb-10 max-w-3xl mx-auto">
+                        <div className={chatShell.messagesInner}>
                             {messages.map((msg) => (
                                 <ChatMessageRow
                                     key={msg.id}
                                     msg={msg}
                                     isActiveAssistant={msg.id === activeAssistantId}
                                     motionInitial={true}
+                                    aiName={aiDisplayName}
                                 />
                             ))}
                             <div ref={messagesEndRef} />
@@ -1101,15 +1235,16 @@ export default function ChatbotUI() {
                     )}
                 </div>
 
-                <div className="sticky bottom-0 bg-gradient-to-t from-gray-100/95 to-transparent dark:from-gray-900/95 backdrop-blur-xl border-t border-gray-200 dark:border-gray-800 p-4">
-                    <div className="flex items-center gap-3 max-w-3xl mx-auto">
+                {/* ── Composer ── */}
+                <div className={chatComposer.bar}>
+                    <div className={chatComposer.inner}>
                         <Textarea
                             value={input}
                             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
                                 setInput(e.target.value)
                             }
-                            placeholder="Type your message... (Shift+Enter for new line)"
-                            className="flex-1 rounded-2xl px-4 py-3 text-base shadow-lg border-2 bg-white/80 dark:bg-gray-800/80 backdrop-blur-md focus:ring-2 focus:ring-blue-500/20 resize-none min-h-[48px]"
+                            placeholder={chatCopy.inputPlaceholder}
+                            className={chatComposer.textarea}
                             onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
                                 if (e.key === "Enter" && !e.shiftKey) {
                                     e.preventDefault();
@@ -1118,14 +1253,15 @@ export default function ChatbotUI() {
                             }}
                             rows={1}
                         />
-                        <Button
-                            size="icon"
+                        <button
+                            type="button"
                             onClick={() => void handleSend()}
                             disabled={!input.trim() || chatInFlight}
-                            className="rounded-full shadow-lg h-12 w-12 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className={chatComposer.sendBtn}
+                            aria-label="Send"
                         >
-                            <Send className="h-5 w-5" />
-                        </Button>
+                            <Send className="size-4" />
+                        </button>
                     </div>
                 </div>
             </div>
