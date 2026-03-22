@@ -9,12 +9,7 @@ import { z } from "zod";
 import { getChatModel } from "@/lib/chat-model";
 import { fetchKnowledgeBase } from "@/lib/knowledge-context";
 import { getKnowledgeRecordById } from "@/lib/knowledge-record";
-import {
-    getAssistantMode,
-    getChatAiName,
-    getChatAiPersonality,
-    getChatTemperature,
-} from "@/lib/chatbot-config";
+import { getActiveAgentConfig } from "@/lib/agents";
 import { isServerDebugEnabled, parseChatMaxOutputTokens } from "@/lib/env-server";
 
 /** Required for streaming UI message chunks; avoids buffering that breaks the client parser. */
@@ -125,12 +120,13 @@ export async function POST(req: Request) {
         }
 
         const debug = isServerDebugEnabled();
-        const assistantMode = getAssistantMode();
+        const agentConfig = getActiveAgentConfig();
+        const { assistantMode, tools: agentTools } = agentConfig;
         const systemPrompt = `${buildChatSystemPrompt(
-            getChatAiName(),
-            getChatAiPersonality(),
+            agentConfig.aiName,
+            agentConfig.personality,
             assistantMode
-        )}${KNOWLEDGE_SEARCH_TOOL_AVAILABILITY}`;
+        )}${agentTools.searchKnowledgeBase ? KNOWLEDGE_SEARCH_TOOL_AVAILABILITY : ""}`;
 
         const searchKnowledgeBaseDescription = assistantMode
             ? "Recall from the user's knowledge base—their stored documents are part of your extended memory for this chat. Call whenever recall could answer them or you are unsure; do this before saying you don't know or guessing (except trivial generic small talk). Irrelevant retrieved chunks should be ignored, not quoted. Use salient keywords; broaden the query if needed."
@@ -148,7 +144,7 @@ export async function POST(req: Request) {
             }),
             execute: async ({ query }) => {
                 try {
-                    const { context, hits } = await fetchKnowledgeBase(query);
+                    const { context, hits } = await fetchKnowledgeBase(query, agentConfig.knowledgeSearchNResults);
                     const base = {
                         found: context.length > 0,
                         context:
@@ -262,7 +258,7 @@ export async function POST(req: Request) {
         });
 
         const tools = {
-            searchKnowledgeBase,
+            ...(agentTools.searchKnowledgeBase ? { searchKnowledgeBase } : {}),
             ...(debug
                 ? {
                     proposeAddKnowledgeDocument,
@@ -275,14 +271,14 @@ export async function POST(req: Request) {
         const modelMessages = await convertToModelMessages(messages, { tools });
 
         const result = streamText({
-            model: getChatModel(),
+            model: getChatModel(agentConfig.ollamaChatModel),
             system: debug
                 ? `${systemPrompt}\n${assistantMode ? DEBUG_KB_TOOLS_PROMPT_ASSISTANT : DEBUG_KB_TOOLS_PROMPT_PEER}`
                 : systemPrompt,
             messages: modelMessages,
             tools,
             toolChoice: "auto",
-            temperature: getChatTemperature(),
+            temperature: agentConfig.chatTemperature,
             maxOutputTokens: parseChatMaxOutputTokens(),
             stopWhen: stepCountIs(8),
         });

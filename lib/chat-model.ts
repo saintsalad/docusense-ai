@@ -22,7 +22,7 @@ const ollama = createOpenAI({
     apiKey: process.env.OLLAMA_OPENAI_API_KEY ?? "ollama",
 });
 
-/** Resolves model id from `data/chatbot-config.json` or `OLLAMA_CHAT_MODEL`. */
-export function getChatModel() {
-    return ollama.chat(getResolvedOllamaChatModelId());
+/** Returns a chat model. If `modelId` is provided it overrides the global config. */
+export function getChatModel(modelId?: string) {
+    return ollama.chat(modelId ?? getResolvedOllamaChatModelId());
 }

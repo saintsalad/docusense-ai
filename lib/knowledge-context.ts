@@ -20,13 +20,13 @@ export type KnowledgeFetchResult = {
 /**
  * Semantic search over the `docs` collection for RAG / tool execution.
  */
-export async function fetchKnowledgeBase(query: string): Promise<KnowledgeFetchResult> {
+export async function fetchKnowledgeBase(query: string, nResultsOverride?: number): Promise<KnowledgeFetchResult> {
     const collection = await getChroma().getCollection({
         name: "docs",
         embeddingFunction: getDefaultEmbeddingFunction(),
     });
 
-    const nResults = getKnowledgeSearchNResults();
+    const nResults = nResultsOverride ?? getKnowledgeSearchNResults();
 
     const results = await collection.query({
         queryTexts: [query],

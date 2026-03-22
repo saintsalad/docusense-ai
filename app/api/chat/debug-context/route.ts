@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAssistantMode, getChatAiName, getChatAiPersonality } from "@/lib/chatbot-config";
+import { getActiveAgentConfig } from "@/lib/agents";
 import { isServerDebugEnabled } from "@/lib/env-server";
 
 export const dynamic = "force-dynamic";
@@ -9,12 +9,12 @@ export async function GET() {
         return NextResponse.json({ debug: false as const });
     }
 
-    const personality = getChatAiPersonality();
+    const config = getActiveAgentConfig();
 
     return NextResponse.json({
         debug: true as const,
-        aiName: getChatAiName(),
-        aiPersonality: personality ?? "",
-        assistantMode: getAssistantMode(),
+        aiName: config.aiName,
+        aiPersonality: config.personality ?? "",
+        assistantMode: config.assistantMode,
     });
 }

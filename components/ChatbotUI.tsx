@@ -40,6 +40,7 @@ import {
     Sparkles,
     Menu,
     X,
+    Bot,
 } from "lucide-react";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 
@@ -948,6 +949,99 @@ function DebugChatIdentityBanner({ ctx }: { ctx: DebugChatContext }) {
 
 const INITIAL_CONV_ID = "conv-1";
 
+/* ─── Agent data types ───────────────────────────────────────────────────── */
+
+type ChatAgent = { id: string; name: string; aiName: string };
+
+/* ─── Inline agent switcher for the sidebar ─────────────────────────────── */
+
+function AgentSwitcher({
+    agents,
+    activeAgentId,
+    onSwitch,
+    disabled,
+}: {
+    agents: ChatAgent[];
+    activeAgentId: string | null;
+    onSwitch: (id: string) => void;
+    disabled: boolean;
+}) {
+    const [open, setOpen] = useState(false);
+    const activeAgent = agents.find((a) => a.id === activeAgentId) ?? agents[0] ?? null;
+
+    if (agents.length === 0) return null;
+
+    return (
+        <div className={chatSidebar.agentStrip}>
+            <p className={chatSidebar.agentStripLabel}>Agent</p>
+            <button
+                type="button"
+                className={chatSidebar.agentActiveRow}
+                onClick={() => setOpen((v) => !v)}
+                disabled={disabled}
+            >
+                <span className={chatSidebar.agentActiveIcon} aria-hidden>
+                    <Bot className="size-3.5" />
+                </span>
+                <span className="min-w-0 flex-1 truncate">
+                    {activeAgent ? activeAgent.name : "No agent"}
+                </span>
+                <ChevronDown
+                    className={cn(
+                        chatSidebar.agentChevron,
+                        open && chatSidebar.agentChevronOpen
+                    )}
+                />
+            </button>
+
+            {open && (
+                <div className={chatSidebar.agentList}>
+                    {agents.map((agent) => {
+                        const isActive = agent.id === activeAgentId;
+                        return (
+                            <button
+                                key={agent.id}
+                                type="button"
+                                className={cn(
+                                    chatSidebar.agentItem,
+                                    isActive
+                                        ? chatSidebar.agentItemActive
+                                        : chatSidebar.agentItemInactive
+                                )}
+                                onClick={() => {
+                                    onSwitch(agent.id);
+                                    setOpen(false);
+                                }}
+                                disabled={disabled}
+                            >
+                                <span
+                                    className={
+                                        isActive
+                                            ? chatSidebar.agentItemIconActive
+                                            : chatSidebar.agentItemIcon
+                                    }
+                                    aria-hidden
+                                >
+                                    <Bot className="size-3.5" />
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                    <p className="truncate leading-tight">{agent.name}</p>
+                                    <p className="truncate text-[11px] font-normal text-muted-foreground">
+                                        {agent.aiName}
+                                    </p>
+                                </div>
+                                {isActive && (
+                                    <CheckCircle className="ml-auto size-3.5 shrink-0 text-primary" />
+                                )}
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+}
+
 function EmptyChatState({ aiName }: { aiName: string }) {
     return (
         <div className={chatSystem.emptyWrap}>
@@ -973,6 +1067,8 @@ export default function ChatbotUI() {
     const [debugIdentity, setDebugIdentity] = useState<DebugChatContext | null>(null);
     const [aiDisplayName, setAiDisplayName] = useState<string>(chatCopy.defaultAiName);
     const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+    const [agents, setAgents] = useState<ChatAgent[]>([]);
+    const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
     const scrollParentRef = useRef<HTMLDivElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const stickToBottomRef = useRef(true);
@@ -1060,13 +1156,39 @@ export default function ChatbotUI() {
 
     const loadConfig = useCallback(async () => {
         try {
-            const res = await fetch("/api/chatbot-config", { cache: "no-store" });
-            const data = (await res.json()) as {
+            // Load agents list and active agent in parallel
+            const [agentsRes, activeRes] = await Promise.all([
+                fetch("/api/agents", { cache: "no-store" }),
+                fetch("/api/agents/active", { cache: "no-store" }),
+            ]);
+            const agentsData = (await agentsRes.json()) as { ok?: boolean; agents?: ChatAgent[] };
+            const activeData = (await activeRes.json()) as {
                 ok?: boolean;
-                config?: { aiName?: string };
+                activeAgentId?: string | null;
+                agent?: { aiName?: string };
             };
-            if (data.ok && typeof data.config?.aiName === "string" && data.config.aiName.trim()) {
-                setAiDisplayName(data.config.aiName.trim());
+
+            if (agentsData.ok && Array.isArray(agentsData.agents)) {
+                setAgents(agentsData.agents);
+            }
+
+            const aid = activeData.ok ? (activeData.activeAgentId ?? null) : null;
+            setActiveAgentId(aid);
+
+            // AI display name: prefer active agent's aiName
+            const agentAiName = activeData.ok && typeof activeData.agent?.aiName === "string"
+                ? activeData.agent.aiName.trim()
+                : "";
+            if (agentAiName) {
+                setAiDisplayName(agentAiName);
+                return;
+            }
+
+            // Fallback: global chatbot-config
+            const cfgRes = await fetch("/api/chatbot-config", { cache: "no-store" });
+            const cfgData = (await cfgRes.json()) as { ok?: boolean; config?: { aiName?: string } };
+            if (cfgData.ok && typeof cfgData.config?.aiName === "string" && cfgData.config.aiName.trim()) {
+                setAiDisplayName(cfgData.config.aiName.trim());
             }
         } catch { /* silently keep default */ }
     }, []);
@@ -1132,6 +1254,22 @@ export default function ChatbotUI() {
         [chatInFlight]
     );
 
+    const handleSwitchAgent = useCallback(async (id: string) => {
+        try {
+            const res = await fetch("/api/agents/active", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ activeAgentId: id }),
+            });
+            const data = (await res.json()) as { ok?: boolean };
+            if (data.ok) {
+                setActiveAgentId(id);
+                const agent = agents.find((a) => a.id === id);
+                if (agent?.aiName?.trim()) setAiDisplayName(agent.aiName.trim());
+            }
+        } catch { /* ignore */ }
+    }, [agents]);
+
     const handleSend = async () => {
         const text = input.trim();
         if (!text || chatInFlight) return;
@@ -1189,6 +1327,13 @@ export default function ChatbotUI() {
                         <Plus className="size-4" />
                     </button>
                 </div>
+                <AgentSwitcher
+                    agents={agents}
+                    activeAgentId={activeAgentId}
+                    onSwitch={(id) => void handleSwitchAgent(id)}
+                    disabled={chatInFlight}
+                />
+
                 <ScrollArea className={chatSidebar.scrollArea}>
                     <div className={chatSidebar.list}>
                         {convIds.map((convId) => {

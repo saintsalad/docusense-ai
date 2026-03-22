@@ -78,6 +78,25 @@ export const chatSidebar = {
     convTitle: "truncate text-[14px] font-medium leading-tight text-foreground",
     convMeta: "mt-1 flex items-center gap-1.5 text-xs text-muted-foreground",
     convMetaDot: "size-1 shrink-0 rounded-full bg-muted-foreground/40",
+    /** Agent switcher strip — sits above the conversation list */
+    agentStrip:
+        "mx-2 mt-2 mb-1 rounded-xl border border-border bg-muted/30 px-3 py-2",
+    agentStripLabel: "mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground",
+    agentActiveRow:
+        "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-[13px] font-medium text-foreground transition-colors hover:bg-muted/60",
+    agentActiveIcon:
+        "flex size-6 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-primary",
+    agentChevron: "ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform duration-150",
+    agentChevronOpen: "rotate-180",
+    agentList: "mt-1.5 space-y-0.5",
+    agentItem:
+        "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
+    agentItemActive: "bg-primary/8 font-medium text-primary",
+    agentItemInactive: "text-foreground",
+    agentItemIcon:
+        "flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-background text-muted-foreground",
+    agentItemIconActive:
+        "flex size-6 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-primary",
 } as const;
 
 /* ─── Composer ───────────────────────────────────────────────────────────── */

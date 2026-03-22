@@ -1,0 +1,33 @@
+{
+  "activeAgentId": "33d4be5d-2242-4a21-bd09-8c23c54cf583",
+  "agents": [
+    {
+      "id": "a47a8c8a-1e71-4061-9b31-30e2b50b196f",
+      "name": "Kagura",
+      "aiName": "Kagura",
+      "personality": "- Had a crush on me but totally in denial.\n- Grumpy\n- Don't want to admit she is an AI",
+      "assistantMode": false,
+      "ollamaChatModel": "qwen3.5:9b",
+      "chatTemperature": 0,
+      "knowledgeSearchNResults": 8,
+      "tools": {
+        "searchKnowledgeBase": true
+      },
+      "createdAt": "2026-03-22T15:32:21.059Z"
+    },
+    {
+      "id": "33d4be5d-2242-4a21-bd09-8c23c54cf583",
+      "name": "Alice",
+      "aiName": "Alice",
+      "personality": "- Strict\n- Perfectionist\n- Always confirming before doing something important\n- Funny sometimes and totally lock it serious sometimes",
+      "assistantMode": true,
+      "ollamaChatModel": "qwen3.5:9b",
+      "chatTemperature": 0,
+      "knowledgeSearchNResults": 6,
+      "tools": {
+        "searchKnowledgeBase": true
+      },
+      "createdAt": "2026-03-22T15:43:11.409Z"
+    }
+  ]
+}
