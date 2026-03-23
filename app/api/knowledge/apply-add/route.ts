@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 const bodySchema = z.object({
     document: z.string().min(1, "Document text is required"),
-    source: z.string().min(1).optional(),
+    contextAgentName: z.string().max(80).optional(),
 });
 
 export async function POST(req: Request) {
@@ -30,7 +30,10 @@ export async function POST(req: Request) {
         );
     }
 
-    const { document, source } = parsed.data;
+    const { document, contextAgentName: rawAgentName } = parsed.data;
+    const contextAgentName =
+        typeof rawAgentName === "string" ? rawAgentName.trim().slice(0, 80) : "";
+    const authorLabel = contextAgentName.length > 0 ? contextAgentName : "Current Agent";
 
     try {
         const embeddingFn = getDefaultEmbeddingFunction();
@@ -40,16 +43,22 @@ export async function POST(req: Request) {
         });
 
         const recordId = crypto.randomUUID();
+        const meta: Record<string, string> = {
+            date: new Date().toISOString(),
+            source: "chat-request",
+            model: embeddingFn.name ?? "default-embed",
+            savedBy: "agent",
+            savedVia: "chat_kb_confirm",
+            authorLabel,
+        };
+        if (contextAgentName.length > 0) {
+            meta.contextAgentName = contextAgentName;
+        }
+
         await collection.add({
             ids: [recordId],
             documents: [document],
-            metadatas: [
-                {
-                    date: new Date().toISOString(),
-                    source: source ?? "debug-add",
-                    model: embeddingFn.name ?? "default-embed",
-                },
-            ],
+            metadatas: [meta],
         });
 
         return NextResponse.json({ ok: true, recordId });

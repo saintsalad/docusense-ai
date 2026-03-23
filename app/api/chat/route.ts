@@ -181,24 +181,18 @@ export async function POST(req: Request) {
 
         const proposeAddKnowledgeDocument = tool({
             description:
-                "DEBUG: Propose inserting ONE new knowledge-base chunk. Use ONLY when the user clearly asked to add/save/store/remember something in their knowledge base AND the text is what they want persisted (their notes, specs, etc.)—not for general chat answers or unprompted suggestions. If they did not ask to save to the KB, do not call this. For edits to an existing chunk, use proposeUpdateKnowledgeDocument with the UUID from searchKnowledgeBase. User must click Proceed before the vector DB writes; do not claim success until then.",
+                "DEBUG: Propose inserting ONE new knowledge-base chunk. Use ONLY when the user clearly asked to add/save/store/remember something in their knowledge base AND the text is what they want persisted (their notes, specs, etc.)—not for general chat answers or unprompted suggestions. If they did not ask to save to the KB, do not call this. Source is fixed server-side as 'chat-request' and author is derived from the current agent. For edits to an existing chunk, use proposeUpdateKnowledgeDocument with the UUID from searchKnowledgeBase. User must click Proceed before the vector DB writes; do not claim success until then.",
             inputSchema: z.object({
                 newDocumentText: z
                     .string()
                     .min(1)
                     .describe("Full text for the new chunk to store and embed."),
-                source: z
-                    .string()
-                    .min(1)
-                    .optional()
-                    .describe("Optional metadata label (e.g. pasted-note, meeting-notes)."),
             }),
-            execute: async ({ newDocumentText, source }) => {
+            execute: async ({ newDocumentText }) => {
                 return {
                     pendingUserConfirmation: true as const,
                     action: "add" as const,
                     proposedDocument: newDocumentText,
-                    source,
                 };
             },
         });

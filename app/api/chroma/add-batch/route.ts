@@ -48,6 +48,9 @@ export async function POST(req: Request) {
             date: c.date,
             source: typeof source === "string" ? source : "manual",
             model: defaultEmbeddingFunction.name ?? "default-embed",
+            savedBy: "user",
+            savedVia: "file_upload",
+            authorLabel: "User",
         }));
 
         await collection.add({ ids, documents, metadatas });

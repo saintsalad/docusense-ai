@@ -14,10 +14,19 @@ export async function POST(req: Request) {
         });
 
         const id = crypto.randomUUID();
-        const metadatas = [{
-            ...metadata,
-            model: defaultEmbeddingFunction.name
-        }]
+        const incoming =
+            typeof metadata === "object" && metadata !== null && !Array.isArray(metadata)
+                ? (metadata as Record<string, string | number | boolean>)
+                : {};
+        const metadatas = [
+            {
+                ...incoming,
+                model: defaultEmbeddingFunction.name ?? "default-embed",
+                savedBy: "user",
+                savedVia: "api_add",
+                authorLabel: "Local user · API",
+            },
+        ];
         await collection.add({
             ids: [id],
             documents: [text],

@@ -1,12 +1,12 @@
 "use client"
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { Database, Search, Trash2, RefreshCw, Filter, FileText, Activity, BookOpen, Edit } from 'lucide-react'
+import { Database, Search, Trash2, RefreshCw, Filter, FileText, Activity, BookOpen, Edit, Copy, Check } from 'lucide-react'
 
 
 interface CollectionInfo {
@@ -36,12 +36,33 @@ interface Embedding {
         source?: string
         title?: string
         author?: string
+        authorLabel?: string
+        savedBy?: string
+        savedVia?: string
+        contextAgentName?: string
         category?: string
         page?: number
         date?: string
         model?: string
         [key: string]: unknown
     }
+}
+
+function formatIdPreview(id: string): string {
+    if (id.length <= 16) return id
+    return `${id.slice(0, 8)}…${id.slice(-4)}`
+}
+
+function embeddingSearchBlob(e: Embedding): string {
+    const m = e.metadata
+    const bits: string[] = [e.id, e.content]
+    if (m) {
+        for (const key of ['source', 'title', 'authorLabel', 'savedBy', 'author', 'contextAgentName'] as const) {
+            const v = m[key]
+            if (typeof v === 'string' && v) bits.push(v)
+        }
+    }
+    return bits.join(' ').toLowerCase()
 }
 
 export default function KnowledgeBase() {
@@ -51,6 +72,19 @@ export default function KnowledgeBase() {
     const [searchQuery, setSearchQuery] = useState('')
     const [filterType, setFilterType] = useState<string>('all')
     const [isLoading, setIsLoading] = useState(true)
+    const [copiedId, setCopiedId] = useState<string | null>(null)
+
+    const copyRecordId = useCallback(async (id: string) => {
+        try {
+            await navigator.clipboard.writeText(id)
+            setCopiedId(id)
+            window.setTimeout(() => {
+                setCopiedId((current) => (current === id ? null : current))
+            }, 2000)
+        } catch {
+            /* ignore */
+        }
+    }, [])
 
     useEffect(() => {
         fetchData()
@@ -98,10 +132,7 @@ export default function KnowledgeBase() {
         // Filter by search query
         if (searchQuery.trim()) {
             const query = searchQuery.toLowerCase()
-            filtered = filtered.filter(e =>
-                e.id.toLowerCase().includes(query) ||
-                e.content.toLowerCase().includes(query)
-            )
+            filtered = filtered.filter((e) => embeddingSearchBlob(e).includes(query))
         }
 
         setFilteredEmbeddings(filtered)
@@ -291,7 +322,7 @@ export default function KnowledgeBase() {
                         <div className="relative flex-1">
                             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                             <Input
-                                placeholder="Search by ID or content..."
+                                placeholder="Search ID, content, source, author…"
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 className="pl-9"
@@ -354,39 +385,78 @@ export default function KnowledgeBase() {
                             </p>
                         </div>
                     ) : (
+                        <div className="overflow-x-auto rounded-md border">
                         <Table>
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead className="w-[180px]">ID</TableHead>
-                                    <TableHead>Content</TableHead>
-                                    <TableHead className="w-[100px]">Type</TableHead>
-                                    <TableHead className="w-[150px]">Created</TableHead>
-                                    <TableHead className="w-[80px] text-right">Actions</TableHead>
+                                    <TableHead className="w-[140px] min-w-[120px]">ID</TableHead>
+                                    <TableHead className="min-w-[200px] max-w-md">Content</TableHead>
+                                    <TableHead className="w-[120px] min-w-[100px]">Source</TableHead>
+                                    <TableHead className="w-[160px] min-w-[120px]">Author</TableHead>
+                                    <TableHead className="w-[100px] min-w-[88px]">Type</TableHead>
+                                    <TableHead className="w-[150px] min-w-[130px]">Created</TableHead>
+                                    <TableHead className="w-[88px] min-w-[80px] text-right">Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {filteredEmbeddings.map((embedding) => (
+                                {filteredEmbeddings.map((embedding) => {
+                                    const sourceLabel =
+                                        (typeof embedding.metadata?.source === 'string' && embedding.metadata.source) ||
+                                        (typeof embedding.metadata?.title === 'string' && embedding.metadata.title) ||
+                                        null
+                                    const authorDisplay =
+                                        typeof embedding.metadata?.authorLabel === 'string' &&
+                                        embedding.metadata.authorLabel.trim().length > 0
+                                            ? embedding.metadata.authorLabel
+                                            : 'Unknown'
+                                    return (
                                     <TableRow key={embedding.id}>
-                                        <TableCell className="font-mono text-xs">
-                                            <div className="truncate max-w-[160px]" title={embedding.id}>
-                                                {embedding.id}
+                                        <TableCell className="align-top">
+                                            <div className="flex items-start gap-1">
+                                                <span
+                                                    className="font-mono text-xs tabular-nums leading-snug"
+                                                    title={embedding.id}
+                                                >
+                                                    {formatIdPreview(embedding.id)}
+                                                </span>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+                                                    aria-label="Copy full ID"
+                                                    onClick={() => void copyRecordId(embedding.id)}
+                                                >
+                                                    {copiedId === embedding.id ? (
+                                                        <Check className="h-3.5 w-3.5 text-green-600" />
+                                                    ) : (
+                                                        <Copy className="h-3.5 w-3.5" />
+                                                    )}
+                                                </Button>
                                             </div>
-                                            {(embedding.metadata?.source || embedding.metadata?.title) && (
-                                                <div className="text-xs text-muted-foreground mt-1 truncate max-w-[160px]"
-                                                    title={embedding.metadata?.source || embedding.metadata?.title}>
-                                                    {embedding.metadata?.source || embedding.metadata?.title}
-                                                </div>
-                                            )}
                                         </TableCell>
-                                        <TableCell className="max-w-2xl">
+                                        <TableCell className="max-w-md align-top">
                                             <div
-                                                className="text-sm line-clamp-3 cursor-help"
+                                                className="max-h-18 overflow-y-auto text-sm leading-snug pr-1 cursor-help"
                                                 title={embedding.content}
                                             >
                                                 {embedding.content}
                                             </div>
                                         </TableCell>
-                                        <TableCell>
+                                        <TableCell className="align-top text-xs text-muted-foreground">
+                                            <div
+                                                className="line-clamp-2 wrap-break-word"
+                                                title={sourceLabel ?? undefined}
+                                            >
+                                                {sourceLabel ?? '—'}
+                                            </div>
+                                        </TableCell>
+                                        <TableCell className="align-top text-xs">
+                                            <div className="line-clamp-2 wrap-break-word" title={authorDisplay}>
+                                                {authorDisplay}
+                                            </div>
+                                        </TableCell>
+                                        <TableCell className="align-top">
                                             <Badge
                                                 variant={getTypeBadgeVariant(embedding.type)}
                                                 className="gap-1"
@@ -395,10 +465,10 @@ export default function KnowledgeBase() {
                                                 {embedding.type}
                                             </Badge>
                                         </TableCell>
-                                        <TableCell className="text-xs text-muted-foreground">
+                                        <TableCell className="text-xs text-muted-foreground align-top whitespace-nowrap">
                                             {formatDate(embedding.createdAt)}
                                         </TableCell>
-                                        <TableCell className="text-right">
+                                        <TableCell className="text-right align-top">
                                             <Button
                                                 variant="ghost"
                                                 size="icon"
@@ -409,9 +479,11 @@ export default function KnowledgeBase() {
                                             </Button>
                                         </TableCell>
                                     </TableRow>
-                                ))}
+                                    )
+                                })}
                             </TableBody>
                         </Table>
+                        </div>
                     )}
                 </CardContent>
             </Card>
